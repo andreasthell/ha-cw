@@ -87,4 +87,3 @@ class CheckwattConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=_STEP_USER_SCHEMA,
             errors=errors,
         )
-

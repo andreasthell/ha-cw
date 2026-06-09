@@ -70,6 +70,14 @@
           "adjusted": "Justerad",
           "other": "Övrigt"
         }
+      },
+      "news_event": {
+        "name": "Nyhet",
+        "event_types": {
+          "news": "Nyhet",
+          "update": "Uppdatering",
+          "other": "Övrigt"
+        }
       }
     }
   }

@@ -1,6 +1,10 @@
 """Tests for event entity helper functions."""
 
-from custom_components.checkwatt.event import _map_cm10_event_type, _map_logbook_event_type
+from custom_components.checkwatt.event import (
+    _map_cm10_event_type,
+    _map_logbook_event_type,
+    _map_news_event_type,
+)
 
 
 class TestMapCm10EventType:
@@ -46,3 +50,17 @@ class TestMapLogbookEventType:
     def test_other(self):
         assert _map_logbook_event_type("Unknown event") == "other"
         assert _map_logbook_event_type("") == "other"
+
+
+class TestMapNewsEventType:
+    def test_nyheter(self):
+        assert _map_news_event_type("Nyheter") == "news"
+        assert _map_news_event_type("nyheter") == "news"
+
+    def test_uppdatering(self):
+        assert _map_news_event_type("Uppdatering") == "update"
+        assert _map_news_event_type("UPPDATERING") == "update"
+
+    def test_other(self):
+        assert _map_news_event_type("Okänd kategori") == "other"
+        assert _map_news_event_type("") == "other"

@@ -70,6 +70,14 @@
           "adjusted": "Adjusted",
           "other": "Other"
         }
+      },
+      "news_event": {
+        "name": "News",
+        "event_types": {
+          "news": "News",
+          "update": "Update",
+          "other": "Other"
+        }
       }
     }
   }

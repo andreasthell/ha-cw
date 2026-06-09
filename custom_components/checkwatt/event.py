@@ -13,6 +13,15 @@ from . import CheckwattCoordinator
 from .const import DOMAIN
 
 
+def _map_news_event_type(category: str) -> str:
+    c = category.lower()
+    if c == "nyheter":
+        return "news"
+    if c == "uppdatering":
+        return "update"
+    return "other"
+
+
 def _map_logbook_event_type(event: str) -> str:
     e = event.upper()
     if "DEACTIVATE" in e:
@@ -50,6 +59,7 @@ async def async_setup_entry(
         [
             CheckwattCm10StatusEvent(coordinator),
             CheckwattLogbookEvent(coordinator),
+            CheckwattNewsEvent(coordinator),
         ]
     )
 
@@ -125,5 +135,31 @@ class CheckwattLogbookEvent(_CheckwattEventBase):
                     "event": entry.get("event"),
                     "timestamp": entry.get("timestamp"),
                     "detail": entry.get("detail"),
+                },
+            )
+
+
+class CheckwattNewsEvent(_CheckwattEventBase):
+    """Fires for each new EIB news item."""
+
+    _attr_translation_key = "news_event"
+    _attr_icon = "mdi:newspaper-variant-outline"
+    _attr_event_types = ["news", "update", "other"]
+
+    @property
+    def _key(self) -> str:
+        return "news_event"
+
+    def _process_update(self, data: dict) -> None:
+        for item in data.get("new_news_items", []):
+            title = item.get("RubrikEN") or item.get("Rubrik", "")
+            self._trigger_event(
+                _map_news_event_type(item.get("Kategori", "")),
+                {
+                    "title": title,
+                    "title_sv": item.get("Rubrik", ""),
+                    "title_en": item.get("RubrikEN", ""),
+                    "category": item.get("Kategori", ""),
+                    "timestamp": item.get("Tidstampel", ""),
                 },
             )

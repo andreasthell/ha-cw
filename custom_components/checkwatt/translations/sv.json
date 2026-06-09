@@ -1,0 +1,76 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anslut till CheckWatt",
+        "description": "Ange dina inloggningsuppgifter för EnergyInBalance.",
+        "data": {
+          "username": "E-postadress",
+          "password": "Lösenord"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Återautentisera CheckWatt",
+        "description": "Din session har gått ut. Ange dina inloggningsuppgifter igen.",
+        "data": {
+          "username": "E-postadress",
+          "password": "Lösenord"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Felaktig e-postadress eller lösenord.",
+      "cannot_connect": "Kunde inte ansluta till CheckWatt-API:et. Kontrollera nätverksanslutningen.",
+      "unknown": "Ett oväntat fel uppstod."
+    },
+    "abort": {
+      "already_configured": "Det här CheckWatt-kontot är redan konfigurerat."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "solar_power": {"name": "Solkraft"},
+      "battery_power": {"name": "Batterieffekt"},
+      "grid_power": {"name": "Näteffekt"},
+      "battery_soc": {"name": "Batteri laddningsnivå"},
+      "today_revenue": {"name": "Dagens intäkt"},
+      "monthly_revenue": {"name": "Månadsintäkt"},
+      "spot_price": {"name": "Spotpris"},
+      "spot_price_incl_vat": {"name": "Spotpris inkl. moms"},
+      "total_solar_energy": {"name": "Total solenergi"},
+      "total_grid_import": {"name": "Total nätimport"},
+      "total_grid_export": {"name": "Total nätexport"},
+      "total_battery_charge": {"name": "Total batteriladdning"},
+      "total_battery_discharge": {"name": "Total batteriurladdning"},
+      "cm10_status": {"name": "CM10 Status"},
+      "last_seen_cm10": {"name": "CM10 senast sedd"},
+      "last_seen_inverter": {"name": "Växelriktare senast sedd"},
+      "operation_mode": {"name": "Driftläge"},
+      "active_service": {"name": "Aktiv nättjänst"},
+      "price_zone": {"name": "Priszon"},
+      "logbook": {"name": "Loggbok"},
+      "firmware_version": {"name": "Firmware-version"}
+    },
+    "event": {
+      "cm10_test_status": {
+        "name": "CM10 Teststatus",
+        "event_types": {
+          "activated": "Aktiverad",
+          "deactivated": "Avaktiverad",
+          "failed": "Misslyckad",
+          "other": "Övrigt"
+        }
+      },
+      "logbook_event": {
+        "name": "Logbokshändelse",
+        "event_types": {
+          "activated": "Aktiverad",
+          "deactivated": "Avaktiverad",
+          "failed": "Misslyckad",
+          "adjusted": "Justerad",
+          "other": "Övrigt"
+        }
+      }
+    }
+  }
+}

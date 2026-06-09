@@ -1,0 +1,76 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to CheckWatt",
+        "description": "Enter your EnergyInBalance login credentials.",
+        "data": {
+          "username": "Email address",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate CheckWatt",
+        "description": "Your session has expired. Please enter your credentials again.",
+        "data": {
+          "username": "Email address",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email address or password.",
+      "cannot_connect": "Could not connect to the CheckWatt API. Check your network connection.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This CheckWatt account is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "solar_power": {"name": "Solar Power"},
+      "battery_power": {"name": "Battery Power"},
+      "grid_power": {"name": "Grid Power"},
+      "battery_soc": {"name": "Battery State of Charge"},
+      "today_revenue": {"name": "Today's Revenue"},
+      "monthly_revenue": {"name": "Monthly Revenue"},
+      "spot_price": {"name": "Spot Price"},
+      "spot_price_incl_vat": {"name": "Spot Price incl. VAT"},
+      "total_solar_energy": {"name": "Total Solar Energy"},
+      "total_grid_import": {"name": "Total Grid Import"},
+      "total_grid_export": {"name": "Total Grid Export"},
+      "total_battery_charge": {"name": "Total Battery Charge"},
+      "total_battery_discharge": {"name": "Total Battery Discharge"},
+      "cm10_status": {"name": "CM10 Status"},
+      "last_seen_cm10": {"name": "CM10 Last Seen"},
+      "last_seen_inverter": {"name": "Inverter Last Seen"},
+      "operation_mode": {"name": "Operation Mode"},
+      "active_service": {"name": "Active Grid Service"},
+      "price_zone": {"name": "Price Zone"},
+      "logbook": {"name": "Logbook"},
+      "firmware_version": {"name": "Firmware Version"}
+    },
+    "event": {
+      "cm10_test_status": {
+        "name": "CM10 Test Status",
+        "event_types": {
+          "activated": "Activated",
+          "deactivated": "Deactivated",
+          "failed": "Failed",
+          "other": "Other"
+        }
+      },
+      "logbook_event": {
+        "name": "Logbook Event",
+        "event_types": {
+          "activated": "Activated",
+          "deactivated": "Deactivated",
+          "failed": "Failed",
+          "adjusted": "Adjusted",
+          "other": "Other"
+        }
+      }
+    }
+  }
+}

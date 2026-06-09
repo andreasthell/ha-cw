@@ -6,9 +6,8 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import AuthenticationError, CheckwattApiClient
@@ -54,10 +53,10 @@ class CheckwattConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            await self.async_set_unique_id(user_input[CONF_USERNAME].lower())
+            self._abort_if_unique_id_configured()
             errors = await _validate(self.hass, user_input)
             if not errors:
-                await self.async_set_unique_id(user_input[CONF_USERNAME].lower())
-                self._abort_if_unique_id_configured()
                 # H1: use a generic title — don't expose the user's email in the UI/logs.
                 return self.async_create_entry(title="CheckWatt", data=user_input)
 
@@ -80,10 +79,7 @@ class CheckwattConfigFlow(ConfigFlow, domain=DOMAIN):
             if not errors:
                 return self.async_update_reload_and_abort(
                     self._get_reauth_entry(),
-                    data_updates={
-                        CONF_USERNAME: user_input[CONF_USERNAME],
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
-                    },
+                    data_updates=user_input,
                 )
 
         return self.async_show_form(
@@ -92,16 +88,3 @@ class CheckwattConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        return CheckwattOptionsFlow()
-
-
-class CheckwattOptionsFlow(OptionsFlow):
-    """No user-configurable options at this time."""
-
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if user_input is not None:
-            return self.async_create_entry(data=user_input)
-        return self.async_show_form(step_id="init", data_schema=vol.Schema({}))

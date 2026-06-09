@@ -17,6 +17,7 @@ from .const import (
     DOMAIN,
     ENERGY_UPDATE_INTERVAL,
     LOGBOOK_UPDATE_INTERVAL,
+    NEWS_UPDATE_INTERVAL,
     PLATFORMS,
     PRICE_UPDATE_INTERVAL,
     REVENUE_UPDATE_INTERVAL,
@@ -94,6 +95,8 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
         self._last_price_update: datetime | None = None
         self._last_energy_update: datetime | None = None
         self._last_logbook_update: datetime | None = None
+        self._last_news_update: datetime | None = None
+        self._last_news_ts: str | None = None
 
     # ------------------------------------------------------------------
     # Main update
@@ -149,6 +152,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 "cm10_status_changed": cm10_status_changed,
                 "cm10_status_prev": cm10_status_prev,
                 "new_logbook_entries": [],
+                "new_news_items": [],
                 # Carry over slow-update values from previous cycle.
                 **self._slow_data(),
             }
@@ -170,6 +174,10 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             if self._due(self._last_logbook_update, LOGBOOK_UPDATE_INTERVAL):
                 await self._update_logbook(data)
                 self._last_logbook_update = now
+
+            if self._due(self._last_news_update, NEWS_UPDATE_INTERVAL):
+                await self._update_news(data)
+                self._last_news_update = now
 
             return data
 
@@ -343,6 +351,28 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 self._last_logbook_ts = new_entries[0].get("timestamp")
         except Exception as err:
             _LOGGER.warning("Logbook update failed (%s): %s", type(err).__name__, err)
+
+    async def _update_news(self, data: dict) -> None:
+        """Fetch news and detect items published since the last check."""
+        try:
+            items = await self._client.get_news()
+            if not items:
+                return
+
+            # Sort ascending by timestamp so we can compare and fire oldest-first.
+            items.sort(key=lambda x: x.get("Tidstampel", ""))
+
+            if self._last_news_ts is None:
+                # First fetch — seed timestamp but fire no events.
+                self._last_news_ts = items[-1].get("Tidstampel", "")
+                return
+
+            new_items = [i for i in items if i.get("Tidstampel", "") > self._last_news_ts]
+            if new_items:
+                data["new_news_items"] = new_items
+                self._last_news_ts = new_items[-1].get("Tidstampel", "")
+        except Exception as err:
+            _LOGGER.warning("News update failed (%s): %s", type(err).__name__, err)
 
     async def _update_energy_totals(self, data: dict) -> None:
         """Sum all-time yearly measurements for each meter group."""

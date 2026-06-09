@@ -12,6 +12,7 @@ from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeo
 _LOGGER = logging.getLogger(__name__)
 
 BASE_URL = "https://api.checkwatt.se"
+_SUNHORIZON_URL = "https://sunhorizon-app-api2-f4640054350f.herokuapp.com"
 _JWT_BUFFER = timedelta(minutes=5)
 _REFRESH_BUFFER = timedelta(hours=1)
 _REQUEST_TIMEOUT = ClientTimeout(total=10)  # L1: use ClientTimeout, not bare int
@@ -199,6 +200,20 @@ class CheckwattApiClient:
             f"/revenue/{site_id}",
             params={"from": from_date, "to": to_date, "resolution": "day"},
         )
+
+    async def get_news(self) -> list:
+        """Fetch EIB news items from the Sunhorizon API."""
+        url = f"{_SUNHORIZON_URL}/cw/eib-news"
+        try:
+            async with self._session.get(
+                url,
+                headers={**self._auth_headers(), "wslog-platform": "EIB"},
+                timeout=_REQUEST_TIMEOUT,
+            ) as resp:
+                resp.raise_for_status()
+                return await resp.json()
+        except (ClientResponseError, ClientError) as err:
+            raise ConnectionError(f"News request failed: {type(err).__name__}") from err
 
     async def get_energy_totals(self, meter_ids: list[int]) -> dict:
         """Fetch all-time yearly-grouped totals for the given meter IDs."""

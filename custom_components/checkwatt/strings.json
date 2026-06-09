@@ -24,7 +24,8 @@
       "unknown": "An unexpected error occurred."
     },
     "abort": {
-      "already_configured": "This CheckWatt account is already configured."
+      "already_configured": "This CheckWatt account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
     }
   },
   "entity": {

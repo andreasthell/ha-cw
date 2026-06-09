@@ -202,12 +202,11 @@ class CheckwattApiClient:
         )
 
     async def get_news(self) -> list:
-        """Fetch EIB news items from the Sunhorizon API."""
+        """Fetch EIB news items. No auth sent — endpoint is public."""
         url = f"{_SUNHORIZON_URL}/cw/eib-news"
         try:
             async with self._session.get(
                 url,
-                headers={**self._auth_headers(), "wslog-platform": "EIB"},
                 timeout=_REQUEST_TIMEOUT,
             ) as resp:
                 resp.raise_for_status()

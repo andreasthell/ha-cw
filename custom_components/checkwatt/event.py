@@ -82,7 +82,11 @@ class _CheckwattEventBase(CoordinatorEntity[CheckwattCoordinator], EventEntity):
         raise NotImplementedError
 
     def _handle_coordinator_update(self) -> None:
-        self._process_update(self.coordinator.data)
+        # Listeners also run after failed refreshes, where coordinator.data
+        # still holds the previous payload — skip processing so the same
+        # event signals don't fire again on every failed cycle.
+        if self.coordinator.last_update_success:
+            self._process_update(self.coordinator.data)
         super()._handle_coordinator_update()
 
     def _process_update(self, data: dict) -> None:

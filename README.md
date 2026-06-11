@@ -43,7 +43,7 @@ Integrationen loggar in **en gång** och återanvänder JWT-token i ~2 timmar. T
 
 ### Förutsättningar
 
-- Home Assistant 2024.1 eller senare
+- Home Assistant 2024.11 eller senare
 - [HACS](https://hacs.xyz) installerat
 
 ### Steg 1 – Lägg till som custom repository

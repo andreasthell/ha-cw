@@ -21,6 +21,7 @@
     "error": {
       "invalid_auth": "Felaktig e-postadress eller lösenord.",
       "cannot_connect": "Kunde inte ansluta till CheckWatt-API:et. Kontrollera nätverksanslutningen.",
+      "account_mismatch": "E-postadressen måste vara samma som kontot ursprungligen konfigurerades med.",
       "unknown": "Ett oväntat fel uppstod."
     },
     "abort": {

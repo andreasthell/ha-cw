@@ -138,6 +138,13 @@ class CheckwattApiClient:
     def _auth_headers(self) -> dict:
         return {"authorization": f"Bearer {self._jwt}"}
 
+    def _invalidate_jwt_on_401(self, status: int) -> None:
+        """Drop a server-rejected JWT so the next cycle re-authenticates
+        instead of retrying the locally-still-valid token until it expires."""
+        if status == 401:
+            self._jwt = None
+            self._jwt_expiry = None
+
     async def _get(self, path: str, params: dict | list | None = None) -> dict | list:
         """GET request. Use *params* for query parameters — aiohttp encodes them safely."""
         url = f"{BASE_URL}{path}"
@@ -148,6 +155,7 @@ class CheckwattApiClient:
                 params=params,
                 timeout=_REQUEST_TIMEOUT,
             ) as resp:
+                self._invalidate_jwt_on_401(resp.status)
                 resp.raise_for_status()
                 return await resp.json()
         except (ClientResponseError, ClientError) as err:
@@ -160,6 +168,7 @@ class CheckwattApiClient:
             async with self._session.get(
                 url, headers=self._auth_headers(), timeout=_REQUEST_TIMEOUT
             ) as resp:
+                self._invalidate_jwt_on_401(resp.status)
                 resp.raise_for_status()
                 return (await resp.text()).strip()
         except (ClientResponseError, ClientError) as err:

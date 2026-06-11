@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
@@ -25,6 +26,28 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Spot price slot timestamps from the API are naive Swedish local time,
+# regardless of where the HA host runs.
+_PRICE_TZ = ZoneInfo("Europe/Stockholm")
+
+
+def _select_spot_price(prices: list[dict], now_local: datetime) -> float | None:
+    """Return the price of the latest 15-min slot not after *now_local*.
+
+    *now_local* must be naive Swedish local time, matching the slot timestamps.
+    """
+    current: float | None = None
+    for entry in prices:
+        try:
+            slot = datetime.fromisoformat(entry["Date"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if slot <= now_local:
+            current = entry["Value"]
+        else:
+            break
+    return current
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -76,6 +99,9 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
         self._site_id: int | None = None
         self._rpi_serial: str | None = None
         self._price_zone: str | None = None
+
+        # Cached spot price slots; the current slot is re-selected every cycle.
+        self._spot_prices: list[dict] = []
 
         # Meter IDs for energy total sensors, filled from energyflow response.
         self._solar_ids: list[int] = []
@@ -179,6 +205,13 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 await self._update_news(data)
                 self._last_news_update = now
 
+            # Re-select the current 15-min slot every cycle so the sensor
+            # doesn't lag behind the hourly price fetch.
+            data["spot_price_sek_kwh"] = _select_spot_price(
+                self._spot_prices, datetime.now(_PRICE_TZ).replace(tzinfo=None)
+            )
+            data["price_zone"] = self._price_zone
+
             return data
 
         except AuthenticationError as err:
@@ -248,8 +281,6 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 "total_export_kwh": None,
                 "total_charge_kwh": None,
                 "total_discharge_kwh": None,
-                "spot_price_sek_kwh": None,
-                "price_zone": None,
             }
         # Note: event signals (cm10_status_changed, new_logbook_entries) are
         # intentionally NOT carried over — they must only fire once per occurrence.
@@ -265,8 +296,6 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 "total_export_kwh",
                 "total_charge_kwh",
                 "total_discharge_kwh",
-                "spot_price_sek_kwh",
-                "price_zone",
             )
         }
 
@@ -286,14 +315,16 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             month_resp = await self._client.get_revenue(
                 self._site_id, month_start.isoformat(), today.isoformat()
             )
+            # NetRevenue can be an explicit null for unsettled days.
             data["monthly_revenue_sek"] = sum(
-                r.get("NetRevenue", 0) for r in month_resp.get("Revenue", [])
+                r.get("NetRevenue") or 0 for r in month_resp.get("Revenue", [])
             )
         except Exception as err:
             _LOGGER.warning("Revenue update failed (%s): %s", type(err).__name__, err)
 
     async def _update_spot_price(self, data: dict) -> None:
-        today = date.today()
+        # Use Sweden's "today" — the host may be in a different timezone.
+        today = datetime.now(_PRICE_TZ).date()
         tomorrow = today + timedelta(days=1)
         try:
             if self._price_zone is None:
@@ -302,21 +333,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             resp = await self._client.get_spot_prices(
                 self._price_zone, today.isoformat(), tomorrow.isoformat()
             )
-            prices = resp.get("Prices", [])
-            # Prices are 15-min slots; find the latest slot not after now.
-            now_local = datetime.now().replace(tzinfo=None)
-            current: float | None = None
-            for entry in prices:
-                try:
-                    slot = datetime.fromisoformat(entry["Date"])
-                    if slot <= now_local:
-                        current = entry["Value"]
-                    else:
-                        break
-                except (KeyError, ValueError):
-                    continue
-            data["spot_price_sek_kwh"] = current
-            data["price_zone"] = self._price_zone
+            self._spot_prices = resp.get("Prices", [])
         except Exception as err:
             _LOGGER.warning("Spot price update failed (%s): %s", type(err).__name__, err)
 

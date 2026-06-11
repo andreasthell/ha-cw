@@ -21,6 +21,7 @@
     "error": {
       "invalid_auth": "Invalid email address or password.",
       "cannot_connect": "Could not connect to the CheckWatt API. Check your network connection.",
+      "account_mismatch": "The email address must match the account this entry was originally set up with.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {

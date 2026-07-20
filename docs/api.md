@@ -26,7 +26,7 @@ Body: {"OneTimePassword": ""}
   "User": "user@example.com",
   "JwtToken": "eyJ...",
   "JwtTokenExpires": "2026-06-08T12:15:52.000Z",
-  "RefreshToken": "95d37bb5-9175-4070-8a4e-22e43d515abf",
+  "RefreshToken": "00000000-0000-0000-0000-000000000000",
   "RefreshTokenExpires": "2026-06-15T06:16:42.000+00:00",
   "Permissions": ["site_measurements_charts", "site_measurements_monetary"],
   "Role": null,
@@ -148,18 +148,18 @@ Authorization: Bearer {jwt_token}
   },
   "Dso": {
     "Id": 72,
-    "DisplayName": "Kraftringen Nät AB"
+    "DisplayName": "Example Nät AB"
   },
   "MainFuseSize": 20,
   "TariffId": 3618,
   "Portfolios": [
-    {"DisplayName": "bix:se4:u", "ServiceId": "fcrdup"},
-    {"DisplayName": "bix:se4:d", "ServiceId": "fcrddown"},
-    {"DisplayName": "Bixia mFRR Up CM SE4", "ServiceId": "mfrrup"}
+    {"DisplayName": "xx:se4:u", "ServiceId": "fcrdup"},
+    {"DisplayName": "xx:se4:d", "ServiceId": "fcrddown"},
+    {"DisplayName": "Example mFRR Up CM SE4", "ServiceId": "mfrrup"}
   ],
   "Reseller": {
     "Id": 338,
-    "DisplayName": "Täta Tak Energi Sverige AB",
+    "DisplayName": "Example Servicepartner AB",
     "PartnerType": "servicepartner"
   },
   "GeneratedEmsSchedule": true
@@ -197,7 +197,7 @@ Preferred over the old `/register/checkrpiv2` and `/asset/status` endpoints.
     "LastSeenInverter": "2026-06-08T14:53:32Z",
     "OperationDate": null,
     "Reseller": {"DisplayName": "...", "Id": 338},
-    "Retailer": {"DisplayName": "Bixia AB", "Id": 90},
+    "Retailer": {"DisplayName": "Example Retailer AB", "Id": 90},
     "RelatedMeters": [
       {"Type": "Charging", "PeakAcKw": 10.0},
       {"Type": "Discharging", "PeakAcKw": 10.0}
@@ -592,7 +592,7 @@ The `tariff_id` comes from `GET /site/{site_id}` → `TariffId`.
 {
   "Id": 3618,
   "DisplayName": "20 A",
-  "DsoDisplayName": "Kraftringen Nät AB",
+  "DsoDisplayName": "Example Nät AB",
   "Components": [
     {
       "Type": "fixed",

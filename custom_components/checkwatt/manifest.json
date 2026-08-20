@@ -1,7 +1,7 @@
 {
   "domain": "checkwatt",
   "name": "CheckWatt",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "documentation": "https://github.com/andreasthell/ha-cw",
   "issue_tracker": "https://github.com/andreasthell/ha-cw/issues",
   "codeowners": ["@andreasthell"],

@@ -6,6 +6,8 @@ Web app: `https://energyinbalance.se`
 > Reverse-engineered from browser traffic. Not an official API. Subject to change without notice.
 >
 > Last verified against a HAR export from the updated EnergyInBalance web app on **2026-09-01**.
+>
+> All examples come from a **single site** (Goodwe inverter, SE4, enrolled in mFRR and FCR-D). Not all sites use the same grid services — a site may run FCR-D only, mFRR only, FCR-N, or none at all — so service-specific fields will differ: `Portfolios` on `/site/{site_id}`, `Service` on `/site/Statuses`, `ServiceName` in `/revenue/{site_id}`, and the mFRR/FCR fields in `/ems/ActivationSchedule` (`FrequencyPower`, `Schedule` activation types, mFRR SoC limits in `UserSetting`). Consumers must treat these as dynamic — never hardcode a service name or assume a field is populated.
 
 ---
 

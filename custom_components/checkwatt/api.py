@@ -69,7 +69,9 @@ class CheckwattApiClient:
             max_expiry = datetime.now(UTC) + timedelta(hours=24)
             self._jwt_expiry = min(raw_expiry, max_expiry)
         except Exception:
-            self._jwt_expiry = datetime.now(UTC) + timedelta(hours=2)
+            # JWTs are only valid ~15 minutes since the 2026-09 API change,
+            # so a decode failure must assume a short lifetime.
+            self._jwt_expiry = datetime.now(UTC) + timedelta(minutes=10)
 
         try:
             self._refresh_expiry = datetime.fromisoformat(

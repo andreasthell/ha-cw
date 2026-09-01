@@ -4,6 +4,10 @@ Base URL: `https://api.checkwatt.se`
 Web app: `https://energyinbalance.se`
 
 > Reverse-engineered from browser traffic. Not an official API. Subject to change without notice.
+>
+> Last verified against a HAR export from the updated EnergyInBalance web app on **2026-09-01**.
+>
+> All examples come from a **single site** (Goodwe inverter, SE4, enrolled in mFRR and FCR-D). Not all sites use the same grid services — a site may run FCR-D only, mFRR only, FCR-N, or none at all — so service-specific fields will differ: `Portfolios` on `/site/{site_id}`, `Service` on `/site/Statuses`, `ServiceName` in `/revenue/{site_id}`, and the mFRR/FCR fields in `/ems/ActivationSchedule` (`FrequencyPower`, `Schedule` activation types, mFRR SoC limits in `UserSetting`). Consumers must treat these as dynamic — never hardcode a service name or assume a field is populated.
 
 ---
 
@@ -25,12 +29,14 @@ Body: {"OneTimePassword": ""}
   "LoggedIn": true,
   "User": "user@example.com",
   "JwtToken": "eyJ...",
-  "JwtTokenExpires": "2026-06-08T12:15:52.000Z",
   "RefreshToken": "00000000-0000-0000-0000-000000000000",
-  "RefreshTokenExpires": "2026-06-15T06:16:42.000+00:00",
-  "Permissions": ["site_measurements_charts", "site_measurements_monetary"],
+  "RefreshTokenExpires": "2026-09-15T12:27:23.258+00:00",
+  "Permissions": ["eib_active_service_status", "site_measurements_charts", "site_measurements_monetary"],
   "Role": null,
   "IsAdmin": false,
+  "AdditionalProperties": null,
+  "ClientId": null,
+  "CesarId": null,
   "ResellerId": null,
   "Elhandelsbolag": null,
   "Koncern": null,
@@ -38,8 +44,10 @@ Body: {"OneTimePassword": ""}
 }
 ```
 
-- `JwtToken` is valid for ~2.25 hours (exp claim in JWT payload).
-- `RefreshToken` is valid for 7 days.
+- ⚠️ **Changed 2026-09:** the `JwtTokenExpires` field has been removed from the response. Read the JWT expiry from the token's own `exp` claim instead.
+- ⚠️ **Changed 2026-09:** `JwtToken` is now valid for only **~15 minutes** (was ~2.25 hours). Rely on the `exp` claim, not a hardcoded lifetime.
+- `RefreshToken` is now valid for **14 days** (was 7).
+- New (null for regular users): `AdditionalProperties`, `ClientId`, `CesarId`. New permission string `eib_active_service_status`.
 
 **Errors:** `401 Unauthorized` on wrong credentials.
 
@@ -150,8 +158,11 @@ Authorization: Bearer {jwt_token}
     "Id": 72,
     "DisplayName": "Example Nät AB"
   },
+  "ShouldHaveGeneratedEmsSchedule": true,
   "MainFuseSize": 20,
   "TariffId": 3618,
+  "NextTariffId": null,
+  "NextTariffEffectiveFrom": null,
   "Portfolios": [
     {"DisplayName": "xx:se4:u", "ServiceId": "fcrdup"},
     {"DisplayName": "xx:se4:d", "ServiceId": "fcrddown"},
@@ -160,13 +171,17 @@ Authorization: Bearer {jwt_token}
   "Reseller": {
     "Id": 338,
     "DisplayName": "Example Servicepartner AB",
-    "PartnerType": "servicepartner"
+    "PartnerType": "servicepartner",
+    "Url": null,
+    "SiteSupport": null
   },
   "GeneratedEmsSchedule": true
 }
 ```
 
 `Portfolios` lists the active grid services the site participates in (FCR-D up/down, mFRR, etc.).
+
+New fields 2026-09: `ShouldHaveGeneratedEmsSchedule`, `NextTariffId`, `NextTariffEffectiveFrom` (upcoming tariff change, null when none), `Reseller.Url`, `Reseller.SiteSupport`.
 
 ---
 
@@ -185,8 +200,12 @@ Preferred over the old `/register/checkrpiv2` and `/asset/status` endpoints.
   {
     "SiteId": 12345,
     "MeterId": 100001,
+    "ClientId": 10001,
+    "RpiSerial": "aabbccddeeff",
     "DisplayName": "Example Site Name",
     "Mba": "SE4",
+    "Email": "user@example.com",
+    "StreetAddress": "Example Street 1",
     "Version": "2.3.104.83",
     "SvkVersion": "6.0",
     "Inverter": "goodwe",
@@ -208,10 +227,12 @@ Preferred over the old `/register/checkrpiv2` and `/asset/status` endpoints.
       "FailedInARow": 0
     },
     "CompatibleRetailer": true,
-    "Service": []
+    "Service": ["mfrrup", "mfrrdown"]
   }
 ]
 ```
+
+New fields 2026-09: `ClientId`, `RpiSerial`, `Email`, `StreetAddress`. `Service` is now populated with the active service IDs (e.g. `"mfrrup"`, `"mfrrdown"`, matching `ServiceId` in site `Portfolios`).
 
 Key fields for HA integration:
 - `Version` – CM10 firmware version (`.83` suffix = device under test)
@@ -264,6 +285,8 @@ Authorization: Bearer {jwt_token}
     "HasSold": 1,
     "HasBought": 1,
     "ResellerId": 338,
+    "Name": null,
+    "IrradianceMeter": null,
     "Units": {
       "WithTime": {"1000000": "MWh", "1000": "kWh", "1": "Wh"},
       "WithoutTime": {"1000000": "MW", "1000": "kW", "1": "W"}
@@ -271,6 +294,8 @@ Authorization: Bearer {jwt_token}
   }
 ]
 ```
+
+New fields 2026-09: `Name`, `IrradianceMeter`.
 
 ---
 
@@ -324,6 +349,8 @@ The primary real-time endpoint. Returns current power values in Watts and batter
 
 ### Get current solar reading
 
+> Not observed in the 2026-09 web traffic — the updated web app uses `/SiteMeasurements/{site_id}/Data` with `resolution=Minute` instead. May still work but should be considered deprecated.
+
 ```
 GET /measurements/SolarNow
 Authorization: Bearer {jwt_token}
@@ -361,9 +388,26 @@ GET /SiteMeasurements/{site_id}/Data
 Authorization: Bearer {jwt_token}
 ```
 
-Flexible endpoint returning 15-minute resolution data for multiple data types in a single request.
+Flexible endpoint returning data for multiple data types in a single request.
+
+**`resolution` values:** `Minute` (new 2026-09), `FifteenMinutes`.
 
 **Available `dataType` values:**
+
+**Power/state data types (new 2026-09** — the updated web app now uses these for the live/day view instead of `/datagrouping/series` with `delta` grouping**):**
+
+| dataType | Description |
+|---|---|
+| `SolarProductionPower` | Solar production (W) |
+| `BatteryChargePower` | Battery charging (W) |
+| `BatteryDischargePower` | Battery discharging (W) |
+| `BoughtPower` | Grid import (W) |
+| `SoldPower` | Grid export (W) |
+| `Soc` | Battery state of charge (%) |
+
+With `resolution=Minute` these return one instantaneous value per minute (in W, or % for `Soc`); the trailing not-yet-reported minute is `null`. `from`/`to` also accept full timestamps (`YYYY-MM-DDTHH:MM:SS`) for windowed polling.
+
+**Energy data types:**
 
 | dataType | Description |
 |---|---|
@@ -394,11 +438,12 @@ Flexible endpoint returning 15-minute resolution data for multiple data types in
       "2026-06-08T00:00:00": 0,
       ...
     }
-  }
+  },
+  "TimeZone": "Europe/Stockholm"
 }
 ```
 
-Values are in **Wh** per 15-minute interval (not W). Timestamps are in the requested `timeZone`.
+For the energy data types, values are in **Wh** per 15-minute interval (not W). Timestamps are in the requested `timeZone`, which is echoed back in the response's `TimeZone` field (new 2026-09).
 
 ---
 
@@ -428,7 +473,7 @@ Authorization: Bearer {jwt_token}
 }
 ```
 
-Values are in **kWh** per 15-minute interval. Timestamps in UTC (note: `Z` suffix unlike the Data endpoint).
+Values are in **kWh** per 15-minute interval. Timestamps in UTC (note: `Z` suffix unlike the Data endpoint). `resolution=Minute` is accepted but still returns 15-minute buckets.
 
 ---
 
@@ -481,7 +526,7 @@ Authorization: Bearer {jwt_token}
 
 - For `SoC` meters, values are in **Wh** battery capacity (not percent).
 - For energy meters, values are in **Wh**.
-- The `delta` grouping is used for the live "today" view (per-minute resolution).
+- The `delta` grouping was used for the live "today" view (per-minute resolution); as of 2026-09 the web app uses `/SiteMeasurements/{site_id}/Data` with `resolution=Minute` for that instead. The endpoint itself is still in use (the web app fetches all-time yearly totals with `grouping=3`).
 
 ---
 
@@ -536,9 +581,11 @@ Swedish price zones: SE1 (north) → SE4 (south).
 ### Get spot prices
 
 ```
-GET /ems/spotprice?zone={zone}&fromDate={YYYY-MM-DD}&toDate={YYYY-MM-DD}
+GET /ems/spotprice?zone={zone}&fromDate={YYYY-MM-DD}&toDate={YYYY-MM-DD}&siteId={site_id}
 Authorization: Bearer {jwt_token}
 ```
+
+The `siteId` parameter is new (2026-09) but optional — the web app also calls with `siteId=0` before the site is known, and the response is identical without it.
 
 **Response 200:**
 ```json
@@ -560,6 +607,8 @@ Authorization: Bearer {jwt_token}
 ---
 
 ### Get grid tariff
+
+> Not observed in the 2026-09 web traffic. May still work.
 
 ```
 GET /ems/gridtariff?siteId={site_id}&fromDate={YYYY-MM-DD}&toDate={YYYY-MM-DD}
@@ -621,6 +670,17 @@ The `tariff_id` comes from `GET /site/{site_id}` → `TariffId`.
 }
 ```
 
+### Get assignable tariffs (new 2026-09)
+
+```
+GET /Tariff/assignableTariffsForSite?siteId={site_id}&mainFuse={amps}&customerType=private
+Authorization: Bearer {jwt_token}
+```
+
+**Response 200:** `{"Tariffs": [ ... ]}` — an array of tariff objects with the same structure as `GET /Tariff/{tariff_id}`, listing the tariffs selectable for the site's DSO and fuse size.
+
+---
+
 ### Get electricity agreement type
 
 ```
@@ -650,7 +710,9 @@ GET /ems/ActivationSchedule
 Authorization: Bearer {jwt_token}
 ```
 
-**Response 200:**
+> ⚠️ **Greatly expanded 2026-09.** The response now includes the full EMS schedule, spot/energy prices, and device settings.
+
+**Response 200 (excerpt):**
 ```json
 {
   "FrequencyPower": [
@@ -666,13 +728,66 @@ Authorization: Bearer {jwt_token}
   "PowerConsumption": [
     {"DateTime": "2026-06-08T02:00:00Z", "Power": 575.0},
     {"DateTime": "2026-06-08T03:00:00Z", "Power": 376.0}
-  ]
+  ],
+  "SpotPrice": [
+    {"Time": "2026-08-31T12:00:00Z", "Price": 54.18}
+  ],
+  "SpotPriceRaw": [
+    {"DurationMin": 15, "Time": "2026-08-31T12:00:00Z", "Price": 44.75}
+  ],
+  "TotalEnergyPrice": {
+    "DurationMinutes": 15,
+    "Prices": [
+      {"Time": "2026-08-31T12:30:00Z", "BuyPriceInEurMwh": 141.14, "SellPriceInEurMwh": 63.31}
+    ]
+  },
+  "Intraday": [],
+  "SystemSetting": {
+    "GRID_AREA_CODE_MBA": "SE4",
+    "STREAM_BATT": "energyDischarge",
+    "STREAM_BOUGHT": "energyImport",
+    "DISCHARGE_MAX": "10000",
+    "CHARGE_MAX": "10000",
+    "BATTERY_CAPACITY": "13.1",
+    "EMS_SCRIPT": ["main_ems_goodwe.py"]
+  },
+  "Updated": "2026-08-19T04:24:09Z",
+  "DateFormat": "'M'MM'H'HH",
+  "HardwareId": null,
+  "GridLimit": null,
+  "UserSetting": {
+    "SoC Max": "90",
+    "SoC Min": "10",
+    "Grid Limit": "13800",
+    "Manual Power": "10000",
+    "Peak Shaving": "0",
+    "Frequency Power": "8300",
+    "SvKControllerType": "6.0",
+    "mFRR Up SOC Limit Lower": "25",
+    "mFRR Up SOC Limit Upper": "85",
+    "mFRR Down SOC Limit Lower": "25",
+    "mFRR Down SOC Limit Upper": "85"
+  },
+  "AllowedActivationTypes": ["NONE", "PS", "LS_DCHG", "LS_CHG", "MANUAL", "FR_FCRD", "FR_FFR", "CELL_BALANCE", "FR_FCR_TEST", "SC", "FR_FCRD_SC", "FR_FCRN", "FR_IDLE", "FR_LF_CHG", "FR_LF_DCHG", "FR_MFRR_UP", "FR_MFRR_DOWN", "PREP_CHG_DCHG"],
+  "Schedule": {
+    "D1H00": "SC",
+    "D1H01": "SC",
+    "D2H00": "FR_MFRR_UP"
+  },
+  "MfrrUpActivation": null,
+  "MfrrDownActivation": null
 }
 ```
 
 - `FrequencyPower.Up/Down` – FCR-D power in Watts.
 - `FrequencyPower.MfrrUp/Down` – mFRR power in Watts.
 - `PowerConsumption` – scheduled/forecasted household consumption per hour.
+- `SpotPrice` – hourly spot price in **EUR/MWh**; `SpotPriceRaw` – 15-minute resolution.
+- `TotalEnergyPrice` – effective buy/sell prices in EUR/MWh per 15-minute interval.
+- `Schedule` – planned EMS activation per hour, keyed `D{day}H{hour}` where D1 = today (see `DateFormat`); values are `AllowedActivationTypes` entries (`SC` = self consumption, `FR_MFRR_UP` = mFRR up reserve, etc.).
+- `UserSetting` – SoC limits, grid limit and other per-site EMS settings (string values).
+- `SystemSetting` – device-level EMS configuration (battery capacity, charge/discharge caps, EMS script).
+- `Updated` – when the schedule was last regenerated.
 
 ---
 
@@ -698,6 +813,8 @@ EDIEL meter IDs for grid import (`Bought`) and export (`Sold`).
 ---
 
 ### Get EMS pending settings
+
+> Not observed in the 2026-09 web traffic. May still work.
 
 ```
 GET /ems/service/Pending?Serial={rpi_serial}
@@ -737,15 +854,19 @@ No auth required. Returns all energy retailers across SE/NO/DK/FI with Id and Di
 ### Token lifecycle
 
 ```
-JWT token:       valid ~2.25 hours
-Refresh token:   valid 7 days
+JWT token:       valid ~15 minutes (was ~2.25 hours; changed 2026-09)
+Refresh token:   valid 14 days (was 7 days; changed 2026-09)
 
 Strategy:
+  read jwt expiry from the JWT's own exp claim
+  (the JwtTokenExpires response field was removed 2026-09)
   if jwt_expiry - now < 5 min:
       GET /user/RefreshToken  (uses refresh token)
   if refresh_expiry - now < 1 day:
       POST /user/Login        (full re-login, store new refresh token)
 ```
+
+With a ~15-minute JWT and a 5-minute buffer this means a token refresh roughly every 10 minutes — cheap, but do not assume a multi-hour JWT lifetime anywhere.
 
 ### Site ID vs RPI serial
 

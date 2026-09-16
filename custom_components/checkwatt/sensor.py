@@ -18,6 +18,7 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfEnergy,
     UnitOfPower,
+    UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -164,6 +165,44 @@ SENSOR_DESCRIPTIONS: tuple[CheckwattSensorDescription, ...] = (
         suggested_display_precision=0,
         value_fn=lambda d: d.get("battery_soc_pct"),
     ),
+    # ---- Available power (EIB "Available power" panel) ----------------------
+    CheckwattSensorDescription(
+        key="available_charge_kw",
+        translation_key="available_charge_power",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        suggested_display_precision=1,
+        value_fn=lambda d: d.get("available_charge_kw"),
+    ),
+    CheckwattSensorDescription(
+        key="available_discharge_kw",
+        translation_key="available_discharge_power",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        suggested_display_precision=1,
+        value_fn=lambda d: d.get("available_discharge_kw"),
+    ),
+    # ---- Battery temperature ------------------------------------------------
+    CheckwattSensorDescription(
+        key="battery_temp_high_c",
+        translation_key="battery_temp_high",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_display_precision=1,
+        value_fn=lambda d: d.get("battery_temp_high_c"),
+    ),
+    CheckwattSensorDescription(
+        key="battery_temp_low_c",
+        translation_key="battery_temp_low",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_display_precision=1,
+        value_fn=lambda d: d.get("battery_temp_low_c"),
+    ),
     # ---- Revenue ------------------------------------------------------------
     CheckwattSensorDescription(
         key="today_revenue_sek",
@@ -294,6 +333,12 @@ SENSOR_DESCRIPTIONS: tuple[CheckwattSensorDescription, ...] = (
         value_fn=lambda d: _logbook_state(d.get("logbook_raw")),
     ),
     CheckwattSensorDescription(
+        key="internet_connection",
+        translation_key="internet_connection",
+        icon="mdi:lan",
+        value_fn=lambda d: d.get("internet_connection"),
+    ),
+    CheckwattSensorDescription(
         key="firmware_version",
         translation_key="firmware_version",
         icon="mdi:chip",
@@ -366,4 +411,9 @@ class CheckwattSensor(CoordinatorEntity[CheckwattCoordinator], SensorEntity):
                 for e in entries[:5]
             ]
             return {"recent_entries": recent}
+        if key == "internet_connection":
+            return {
+                "uptime_s": self.coordinator.data.get("cm10_uptime_s"),
+                "default_route": self.coordinator.data.get("default_route"),
+            }
         return None

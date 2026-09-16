@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -15,6 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import AuthenticationError, CheckwattApiClient
 from .const import (
+    DIAG_UPDATE_INTERVAL,
     DOMAIN,
     ENERGY_UPDATE_INTERVAL,
     LOGBOOK_UPDATE_INTERVAL,
@@ -48,6 +50,43 @@ def _select_spot_price(prices: list[dict], now_local: datetime) -> float | None:
         else:
             break
     return current
+
+
+def _parse_diag_blob(blob: dict) -> dict:
+    """Extract HA-relevant values from a connectionStatus Current.Blob.
+
+    Battery temperatures come from the inverter stats; with several inverters
+    the highest high and lowest low are reported, matching the EIB UI.
+    """
+    temps_h: list[float] = []
+    temps_l: list[float] = []
+    inverter_stats = (blob.get("topics") or {}).get("ems/inverter_stat") or {}
+    for inverters in inverter_stats.values():
+        if not isinstance(inverters, list):
+            continue
+        for inv in inverters:
+            if not isinstance(inv, dict):
+                continue
+            if inv.get("temp_h") is not None:
+                temps_h.append(inv["temp_h"])
+            if inv.get("temp_l") is not None:
+                temps_l.append(inv["temp_l"])
+
+    default_route = blob.get("default_route") or []
+    if blob.get("hello_eth0"):
+        connection = "Network cable (LAN1)"
+    elif "ppp0" in default_route:
+        connection = "Mobile internet (4G)"
+    else:
+        connection = "No internet"
+
+    return {
+        "battery_temp_high_c": max(temps_h) if temps_h else None,
+        "battery_temp_low_c": min(temps_l) if temps_l else None,
+        "internet_connection": connection,
+        "cm10_uptime_s": blob.get("uptime_s"),
+        "default_route": default_route,
+    }
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -121,6 +160,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
         self._last_price_update: datetime | None = None
         self._last_energy_update: datetime | None = None
         self._last_logbook_update: datetime | None = None
+        self._last_diag_update: datetime | None = None
         self._last_news_update: datetime | None = None
         self._last_news_ts: str | None = None
 
@@ -156,6 +196,12 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             if new_test_status is not None:
                 self._last_test_status = new_test_status
 
+            # Available power the battery can offer CheckWatt right now
+            # (the EIB "Available power" panel).
+            related_meters = {
+                m.get("Type"): m.get("PeakAcKw") for m in status.get("RelatedMeters") or []
+            }
+
             data: dict = {
                 # Identity
                 "site_id": self._site_id,
@@ -172,6 +218,8 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 "operation_preference": status.get("OperationPreference"),
                 "fp_up_kw": status.get("FpUpInKw"),
                 "fp_down_kw": status.get("FpDownInKw"),
+                "available_charge_kw": related_meters.get("Charging"),
+                "available_discharge_kw": related_meters.get("Discharging"),
                 "test_info": test_info,
                 "logbook_raw": self._logbook_raw,
                 # Event signals — reset each cycle, set below if triggered.
@@ -200,6 +248,10 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             if self._due(self._last_logbook_update, LOGBOOK_UPDATE_INTERVAL):
                 await self._update_logbook(data)
                 self._last_logbook_update = now
+
+            if self._due(self._last_diag_update, DIAG_UPDATE_INTERVAL):
+                await self._update_diagnostics(data)
+                self._last_diag_update = now
 
             if self._due(self._last_news_update, NEWS_UPDATE_INTERVAL):
                 await self._update_news(data)
@@ -281,6 +333,11 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 "total_export_kwh": None,
                 "total_charge_kwh": None,
                 "total_discharge_kwh": None,
+                "battery_temp_high_c": None,
+                "battery_temp_low_c": None,
+                "internet_connection": None,
+                "cm10_uptime_s": None,
+                "default_route": None,
             }
         # Note: event signals (cm10_status_changed, new_logbook_entries) are
         # intentionally NOT carried over — they must only fire once per occurrence.
@@ -296,6 +353,11 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 "total_export_kwh",
                 "total_charge_kwh",
                 "total_discharge_kwh",
+                "battery_temp_high_c",
+                "battery_temp_low_c",
+                "internet_connection",
+                "cm10_uptime_s",
+                "default_route",
             )
         }
 
@@ -368,6 +430,19 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 self._last_logbook_ts = new_entries[0].get("timestamp")
         except Exception as err:
             _LOGGER.warning("Logbook update failed (%s): %s", type(err).__name__, err)
+
+    async def _update_diagnostics(self, data: dict) -> None:
+        """Fetch CM10 diagnostics: battery temperatures and internet connection."""
+        try:
+            resp = await self._client.get_connection_status(self._site_id)
+            blob_raw = (resp.get("Current") or {}).get("Blob")
+            if not blob_raw:
+                return
+            blob = json.loads(blob_raw)
+            if isinstance(blob, dict):
+                data.update(_parse_diag_blob(blob))
+        except Exception as err:
+            _LOGGER.warning("Diagnostics update failed (%s): %s", type(err).__name__, err)
 
     async def _update_news(self, data: dict) -> None:
         """Fetch news and detect items published since the last check."""

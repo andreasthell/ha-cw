@@ -225,6 +225,23 @@ class CheckwattApiClient:
         except (ClientResponseError, ClientError) as err:
             raise ConnectionError(f"News request failed: {type(err).__name__}") from err
 
+    async def get_connection_status(self, site_id: int) -> dict:
+        """Fetch CM10 diagnostics: connectivity, uptime and inverter temperatures.
+
+        New endpoint 2026-09, backs the EIB "Internet connection" and
+        "Battery temperature" panels. The interesting data lives in
+        Current.Blob, a JSON-encoded string.
+        """
+        now = datetime.now(UTC)
+        fmt = "%Y-%m-%dT%H:%M:%S.000Z"
+        return await self._get(
+            f"/diag/{site_id}/connectionStatus",
+            params={
+                "from": (now - timedelta(minutes=5)).strftime(fmt),
+                "to": now.strftime(fmt),
+            },
+        )
+
     async def get_energy_totals(self, meter_ids: list[int]) -> dict:
         """Fetch all-time yearly-grouped totals for the given meter IDs."""
         from datetime import date

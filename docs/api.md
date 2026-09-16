@@ -825,6 +825,78 @@ Returns pending EMS configuration changes. Response is an array of service strin
 
 ---
 
+## Diagnostics
+
+### Get connection status (new 2026-09)
+
+```
+GET /diag/{site_id}/connectionStatus?from={iso_utc}&to={iso_utc}
+Authorization: Bearer {jwt_token}
+```
+
+Backs the EIB "Internet connection" and "Battery temperature" panels. The web
+app queries a 5-minute window ending now (ISO 8601 UTC with milliseconds, e.g.
+`2026-09-16T09:20:46.097Z`).
+
+**Response 200:**
+```json
+{
+  "SiteId": 12345,
+  "From": "2026-09-16T09:20:46.097Z",
+  "To": "2026-09-16T09:25:46.097Z",
+  "Current": {"Timestamp": "2026-09-16T08:13:35Z", "Blob": "{...json string...}"},
+  "History": []
+}
+```
+
+`Current.Blob` is a **JSON-encoded string** with CM10 diagnostics:
+
+```json
+{
+  "eth": {"eth0": {"rx_packets": 4527, "carrier_changes": 0}, "eth1": {}, "win_s": 4197},
+  "topics": {
+    "ems/inverter_stat": {
+      "goodwe": [
+        {
+          "id": "192.168.5.128",
+          "soc": 85.0,
+          "model": "GW10KN-ET",
+          "serial": "...",
+          "fw_ver": "master:13-slave:13 /arm:33",
+          "temp_h": 36.4,
+          "temp_l": 20.8,
+          "pv_power": 0.0,
+          "battery_power": -12.0,
+          "set_point": 0.0
+        }
+      ]
+    },
+    "ems/datastream_energyPv": 0.0,
+    "ems/datastream_energyImport": 186.0,
+    "ems/datastream_energyDischarge": -12.0
+  },
+  "screens": ["15814.sender", "15811.goodwe", "..."],
+  "arp_eth1": [{"ip": "192.168.5.128", "mac": "...", "state": ["REACHABLE"]}],
+  "uptime_s": 1114187,
+  "linux_ips": [{"ip": "...", "iface": "eth0"}],
+  "hello_eth0": true,
+  "modem_stat": {"ts": "2026-09-16 04:05:04", "status": "modem"},
+  "default_route": ["ppp0", "eth0"]
+}
+```
+
+Key fields:
+- `topics."ems/inverter_stat".{vendor}[].temp_h` / `temp_l` – battery temperature highest/lowest (°C)
+- `hello_eth0` – LAN1 internet check succeeded (EIB shows "Primary – Network cable (LAN1): Connected")
+- `default_route` – active route interfaces (`eth0` = LAN1, `ppp0` = 4G modem)
+- `uptime_s` – CM10 uptime in seconds
+- `eth1` / `arp_eth1` – the inverter-facing LAN port
+
+The "Available power" panel (Can charge / Can discharge) comes from
+`RelatedMeters[].PeakAcKw` in `/site/Statuses`, not from this endpoint.
+
+---
+
 ## Misc
 
 ### Get energy providers list
@@ -849,6 +921,7 @@ No auth required. Returns all energy retailers across SE/NO/DK/FI with Id and Di
 | Monthly revenue | 15 min | `/revenue/{siteId}` |
 | Spot price | 60 min (or at :00 when tomorrow's prices arrive ~13:00) | `/ems/spotprice` |
 | Site status / CM10 seen | 5 min | `/site/Statuses` |
+| Diagnostics (battery temp, connectivity) | 5 min | `/diag/{siteId}/connectionStatus` |
 | Site details / tariff | On setup + daily | `/site/{siteId}`, `/Tariff/{id}` |
 
 ### Token lifecycle

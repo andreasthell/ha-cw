@@ -56,7 +56,8 @@
       "active_service": {"name": "Aktiv nättjänst"},
       "price_zone": {"name": "Priszon"},
       "logbook": {"name": "Loggbok"},
-      "firmware_version": {"name": "Firmware-version"}
+      "firmware_version": {"name": "Firmware-version"},
+      "last_poll": {"name": "Senaste API-hämtning"}
     },
     "event": {
       "cm10_test_status": {

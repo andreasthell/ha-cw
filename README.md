@@ -111,7 +111,9 @@ Verifiera att du kan logga in på [energyinbalance.se](https://energyinbalance.s
 
 ### Sensorer visar "Unavailable"
 
-Aktivera debug-loggning i `configuration.yaml` för att se detaljerade felmeddelanden:
+Öppna diagnostiksensorn **Senaste API-hämtning** på CheckWatt-enheten. Dess värde är när API:et senast hämtades utan fel. Attributen visar senaste felet och, för varje långsam hämtning (`revenue`, `price`, `energy`, `logbook`, `diagnostics`, `news`), när den senast lyckades, vad som gick fel (till exempel `HTTP 404`) och när nästa försök görs.
+
+För mer detaljer, aktivera debug-loggning i `configuration.yaml` för att se detaljerade felmeddelanden:
 
 ```yaml
 logger:

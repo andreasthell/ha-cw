@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import custom_components.checkwatt as checkwatt
 from custom_components.checkwatt import CheckwattCoordinator
+from custom_components.checkwatt.const import SLOW_UPDATES
 
 
 class FakeClient:
@@ -13,12 +14,17 @@ class FakeClient:
 
     def __init__(self):
         self.test_status: str | None = "Activated"
+        self.mba: str | None = None
         self.revenue: list[dict] = []
         self.meters: list[dict] = [{"Measurements": [{"Value": 5_000_000.0}]}]
         self.logbook = ""
         self.connection_status: dict = {}
         self.news_error: Exception | None = None
+        self.price_zone_error: Exception | None = None
+        self.energy_error: Exception | None = None
         self.revenue_dates: list[tuple[str, str]] = []
+        self.prices: list[dict] = []
+        self.spot_price_requests: list[tuple] = []
 
     async def ensure_authenticated(self):
         pass
@@ -36,19 +42,24 @@ class FakeClient:
     async def get_site_statuses(self, serial):
         if self.test_status is None:
             return []
-        return [{"TestInfo": {"Latest": self.test_status}}]
+        return [{"TestInfo": {"Latest": self.test_status}, "Mba": self.mba}]
 
     async def get_revenue(self, site_id, from_date, to_date):
         self.revenue_dates.append((from_date, to_date))
         return {"Revenue": self.revenue}
 
     async def get_price_zone(self):
+        if self.price_zone_error:
+            raise self.price_zone_error
         return "SE4"
 
-    async def get_spot_prices(self, zone, from_date, to_date):
-        return {"Prices": []}
+    async def get_spot_prices(self, zone, from_date, to_date, site_id):
+        self.spot_price_requests.append((zone, from_date, to_date, site_id))
+        return {"Prices": self.prices}
 
     async def get_energy_totals(self, meter_ids):
+        if self.energy_error:
+            raise self.energy_error
         return {"Meters": self.meters}
 
     async def get_connection_status(self, site_id):
@@ -67,7 +78,8 @@ def _coordinator() -> tuple[CheckwattCoordinator, FakeClient]:
 
 def _refresh(coordinator: CheckwattCoordinator) -> dict:
     """Run one update cycle with every slow update due, storing data like HA does."""
-    coordinator._next_update.clear()
+    for status in coordinator._update_status.values():
+        status["next_attempt"] = datetime.min.replace(tzinfo=UTC)
     coordinator.data = asyncio.run(coordinator._async_update_data())
     return coordinator.data
 
@@ -180,13 +192,13 @@ class TestSlowUpdateRetry:
         client.news_error = ConnectionError("news host down")
         before = datetime.now(UTC)
         _refresh(coordinator)
-        assert coordinator._next_update["news"] <= before + timedelta(minutes=6)
+        assert coordinator._update_status["news"]["next_attempt"] <= before + timedelta(minutes=6)
 
     def test_successful_update_waits_full_interval(self):
         coordinator, _ = _coordinator()
-        before = datetime.now(UTC)
+        before = datetime.now(UTC).replace(microsecond=0)  # the coordinator rounds too
         _refresh(coordinator)
-        assert coordinator._next_update["news"] >= before + timedelta(hours=4)
+        assert coordinator._update_status["news"]["next_attempt"] >= before + timedelta(hours=4)
 
 
 class TestLogbookSeeding:
@@ -230,3 +242,85 @@ class TestDiagnostics:
         _refresh(coordinator)
         client.connection_status = {"Current": None}
         assert _refresh(coordinator)["internet_connection"] is None
+
+
+class TestUpdateStatus:
+    def test_every_slow_update_is_reported(self):
+        coordinator, _ = _coordinator()
+        data = _refresh(coordinator)
+        assert set(data["update_status"]) == set(SLOW_UPDATES)
+        assert data["last_poll"].tzinfo is UTC
+
+    def test_success_is_recorded(self):
+        coordinator, _ = _coordinator()
+        data = _refresh(coordinator)
+        price = data["update_status"]["price"]
+        assert price["last_success"] == data["last_poll"]
+        assert price["last_error"] is None
+        assert price["next_attempt"] == data["last_poll"] + timedelta(hours=1)
+
+    def test_failure_is_recorded_and_cleared_on_success(self):
+        coordinator, client = _coordinator()
+        client.price_zone_error = ConnectionError("Request to /ems/pricezone failed: HTTP 404")
+        data = _refresh(coordinator)
+        price = data["update_status"]["price"]
+        assert price["last_success"] is None
+        assert price["last_error"] == (
+            "ConnectionError: Request to /ems/pricezone failed: HTTP 404"
+        )
+        assert price["next_attempt"] == data["last_poll"] + timedelta(minutes=5)
+
+        client.price_zone_error = None
+        data = _refresh(coordinator)
+        assert data["update_status"]["price"]["last_error"] is None
+        assert data["price_zone"] == "SE4"
+
+    def test_energy_error_names_the_meter_group(self):
+        coordinator, client = _coordinator()
+        client.energy_error = ConnectionError("Request to /datagrouping/series failed: timeout")
+        error = _refresh(coordinator)["update_status"]["energy"]["last_error"]
+        assert error == (
+            "total_solar_kwh: ConnectionError: Request to /datagrouping/series failed: timeout"
+        )
+
+    def test_status_is_a_snapshot(self):
+        coordinator, _ = _coordinator()
+        data = _refresh(coordinator)
+        coordinator._update_status["price"]["last_error"] = "later"
+        assert data["update_status"]["price"]["last_error"] is None
+
+
+class TestPriceZone:
+    def test_taken_from_site_status(self):
+        coordinator, client = _coordinator()
+        client.mba = "SE3"
+        client.price_zone_error = ConnectionError("Request to /ems/pricezone failed: HTTP 404")
+        data = _refresh(coordinator)
+        assert data["price_zone"] == "SE3"
+        assert data["update_status"]["price"]["last_error"] is None
+
+    def test_spot_price_works_without_price_zone_endpoint(self):
+        # As in a 2026-09-23 HAR: the web app no longer calls /ems/pricezone.
+        coordinator, client = _coordinator()
+        client.mba = "SE4"
+        client.price_zone_error = ConnectionError("Request to /ems/pricezone failed: HTTP 404")
+        today = datetime.now(checkwatt.API_TZ).replace(tzinfo=None)
+        midnight = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        client.prices = [
+            {"Value": 1.0 + i / 100, "Date": (midnight + timedelta(minutes=15 * i)).isoformat()}
+            for i in range(96)
+        ]
+        data = _refresh(coordinator)
+        assert data["spot_price_sek_kwh"] is not None
+        assert client.spot_price_requests == [
+            (
+                "SE4",
+                midnight.date().isoformat(),
+                (midnight + timedelta(days=1)).date().isoformat(),
+                12345,
+            )
+        ]
+
+    def test_falls_back_to_price_zone_endpoint(self):
+        coordinator, client = _coordinator()
+        assert _refresh(coordinator)["price_zone"] == "SE4"

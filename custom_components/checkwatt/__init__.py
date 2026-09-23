@@ -76,6 +76,12 @@ def _latest_logbook_ts(entries: list[dict]) -> str | None:
     return max((e["timestamp"] for e in entries if e.get("timestamp")), default=None)
 
 
+def _failure(what: str, err: Exception) -> str:
+    """Log a failed slow update and return a short description of the error."""
+    _LOGGER.warning("%s failed (%s): %s", what, type(err).__name__, err)
+    return f"{type(err).__name__}: {err}" if str(err) else type(err).__name__
+
+
 def _parse_utc(value: str | None) -> datetime | None:
     """Parse an ISO 8601 UTC timestamp such as ``2026-09-16T08:13:35Z``."""
     try:
@@ -187,8 +193,9 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
         # Previous CM10 test status, used to detect transitions.
         self._last_test_status: str | None = None
 
-        # When each slow update is next due; missing means due now.
-        self._next_update: dict[str, datetime] = {}
+        # Per slow update: last_success, last_error and next_attempt. Shown on
+        # the "Last API poll" sensor; a missing entry means due now.
+        self._update_status: dict[str, dict] = {}
         self._last_news_ts: str | None = None
 
     # ------------------------------------------------------------------
@@ -227,6 +234,12 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             if new_test_status is not None:
                 self._last_test_status = new_test_status
 
+            # The site's market balance area is its price zone. The web app
+            # reads it from here and no longer calls /ems/pricezone, which now
+            # returns an HTTP error; it is kept only as a fallback.
+            if mba := status.get("Mba"):
+                self._price_zone = mba
+
             # Available power the battery can offer CheckWatt right now
             # (the EIB "Available power" panel).
             related_meters = {
@@ -262,7 +275,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 **self._slow_data(),
             }
 
-            now = datetime.now(UTC)
+            now = datetime.now(UTC).replace(microsecond=0)
             for name, interval, update in (
                 ("revenue", REVENUE_UPDATE_INTERVAL, self._update_revenue),
                 ("price", PRICE_UPDATE_INTERVAL, self._update_spot_price),
@@ -271,12 +284,18 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 ("diagnostics", DIAG_UPDATE_INTERVAL, self._update_diagnostics),
                 ("news", NEWS_UPDATE_INTERVAL, self._update_news),
             ):
-                if now < self._next_update.get(name, now):
+                status = self._update_status.setdefault(
+                    name, {"last_success": None, "last_error": None, "next_attempt": now}
+                )
+                if now < status["next_attempt"]:
                     continue
-                ok = await update(data)
+                error = await update(data)
+                if error is None:
+                    status["last_success"] = now
+                status["last_error"] = error
                 # Retry a failed update soon instead of waiting a full interval.
-                self._next_update[name] = now + (
-                    interval if ok else min(interval, SLOW_RETRY_INTERVAL)
+                status["next_attempt"] = now + (
+                    interval if error is None else min(interval, SLOW_RETRY_INTERVAL)
                 )
 
             # Re-select the current 15-min slot every cycle so the sensor
@@ -285,6 +304,8 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 self._spot_prices, datetime.now(API_TZ).replace(tzinfo=None)
             )
             data["price_zone"] = self._price_zone
+            data["last_poll"] = now
+            data["update_status"] = {name: dict(st) for name, st in self._update_status.items()}
 
             return data
 
@@ -376,7 +397,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             )
         }
 
-    async def _update_revenue(self, data: dict) -> bool:
+    async def _update_revenue(self, data: dict) -> str | None:
         today = datetime.now(API_TZ).date()
         month_start = today.replace(day=1)
         try:
@@ -402,11 +423,10 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 r.get("NetRevenue") or 0 for r in month_resp.get("Revenue", [])
             )
         except Exception as err:
-            _LOGGER.warning("Revenue update failed (%s): %s", type(err).__name__, err)
-            return False
-        return True
+            return _failure("Revenue update", err)
+        return None
 
-    async def _update_spot_price(self, data: dict) -> bool:
+    async def _update_spot_price(self, data: dict) -> str | None:
         # Use Sweden's "today" — the host may be in a different timezone.
         today = datetime.now(API_TZ).date()
         tomorrow = today + timedelta(days=1)
@@ -415,15 +435,14 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 self._price_zone = await self._client.get_price_zone()
 
             resp = await self._client.get_spot_prices(
-                self._price_zone, today.isoformat(), tomorrow.isoformat()
+                self._price_zone, today.isoformat(), tomorrow.isoformat(), self._site_id
             )
             self._spot_prices = resp.get("Prices", [])
         except Exception as err:
-            _LOGGER.warning("Spot price update failed (%s): %s", type(err).__name__, err)
-            return False
-        return True
+            return _failure("Spot price update", err)
+        return None
 
-    async def _update_logbook(self, data: dict) -> bool:
+    async def _update_logbook(self, data: dict) -> str | None:
         """Re-fetch logbook and detect new entries since last check."""
         from .sensor import _LOGBOOK_MAX_BYTES, _parse_logbook  # avoid circular at module level
 
@@ -433,7 +452,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             soc_meter = next((m for m in meters if m.get("InstallationType") == "SoC"), None)
             raw = (soc_meter.get("Logbook") or "") if soc_meter else ""
             if not raw:
-                return True
+                return None
 
             _, entries = _parse_logbook(raw)
             self._logbook_raw = raw[:_LOGBOOK_MAX_BYTES]
@@ -442,7 +461,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             if self._last_logbook_ts is None:
                 # First logbook fetch — record latest timestamp but fire no events.
                 self._last_logbook_ts = _latest_logbook_ts(entries)
-                return True
+                return None
 
             new_entries = [
                 e for e in entries if e.get("timestamp") and e["timestamp"] > self._last_logbook_ts
@@ -452,11 +471,10 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 data["new_logbook_entries"] = list(reversed(new_entries))
                 self._last_logbook_ts = _latest_logbook_ts(new_entries)
         except Exception as err:
-            _LOGGER.warning("Logbook update failed (%s): %s", type(err).__name__, err)
-            return False
-        return True
+            return _failure("Logbook update", err)
+        return None
 
-    async def _update_diagnostics(self, data: dict) -> bool:
+    async def _update_diagnostics(self, data: dict) -> str | None:
         """Fetch CM10 diagnostics: battery temperatures and internet connection."""
         try:
             resp = await self._client.get_connection_status(self._site_id)
@@ -472,16 +490,15 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             else:
                 data.update(dict.fromkeys(_DIAG_KEYS))
         except Exception as err:
-            _LOGGER.warning("Diagnostics update failed (%s): %s", type(err).__name__, err)
-            return False
-        return True
+            return _failure("Diagnostics update", err)
+        return None
 
-    async def _update_news(self, data: dict) -> bool:
+    async def _update_news(self, data: dict) -> str | None:
         """Fetch news and detect items published since the last check."""
         try:
             items = await self._client.get_news()
             if not items:
-                return True
+                return None
 
             # Sort ascending by timestamp so we can compare and fire oldest-first.
             items.sort(key=lambda x: x.get("Tidstampel", ""))
@@ -489,18 +506,17 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             if self._last_news_ts is None:
                 # First fetch — seed timestamp but fire no events.
                 self._last_news_ts = items[-1].get("Tidstampel", "")
-                return True
+                return None
 
             new_items = [i for i in items if i.get("Tidstampel", "") > self._last_news_ts]
             if new_items:
                 data["new_news_items"] = new_items
                 self._last_news_ts = new_items[-1].get("Tidstampel", "")
         except Exception as err:
-            _LOGGER.warning("News update failed (%s): %s", type(err).__name__, err)
-            return False
-        return True
+            return _failure("News update", err)
+        return None
 
-    async def _update_energy_totals(self, data: dict) -> bool:
+    async def _update_energy_totals(self, data: dict) -> str | None:
         """Sum all-time yearly measurements for each meter group."""
         meter_groups = {
             "total_solar_kwh": self._solar_ids,
@@ -509,7 +525,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             "total_charge_kwh": self._charge_ids,
             "total_discharge_kwh": self._discharge_ids,
         }
-        ok = True
+        errors: list[str] = []
         for key, ids in meter_groups.items():
             if not ids:
                 continue
@@ -535,11 +551,6 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                     continue
                 data[key] = total_kwh
             except Exception as err:
-                _LOGGER.warning(
-                    "Energy total update failed for %s (%s): %s",
-                    key,
-                    type(err).__name__,
-                    err,
-                )
-                ok = False
-        return ok
+                errors.append(f"{key}: {_failure(f'Energy total update for {key}', err)}")
+        # One failing meter group must not block the others; report them all.
+        return "; ".join(errors) or None

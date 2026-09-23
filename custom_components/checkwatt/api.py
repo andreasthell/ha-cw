@@ -24,6 +24,15 @@ class AuthenticationError(Exception):
     """Raised when credentials are invalid or tokens cannot be refreshed."""
 
 
+def _describe(err: Exception) -> str:
+    """Say what went wrong with a request, without its URL or query values (L4)."""
+    if isinstance(err, ClientResponseError):
+        return f"HTTP {err.status}"
+    if isinstance(err, TimeoutError):
+        return "timeout"
+    return type(err).__name__
+
+
 class CheckwattApiClient:
     """Async client for the CheckWatt / EnergyInBalance API.
 
@@ -101,8 +110,8 @@ class CheckwattApiClient:
                 self._store_tokens(await resp.json())
         except AuthenticationError:
             raise
-        except (ClientResponseError, ClientError) as err:
-            raise ConnectionError(f"Login request failed: {type(err).__name__}") from err
+        except (ClientError, TimeoutError) as err:
+            raise ConnectionError(f"Login request failed: {_describe(err)}") from err
 
     async def _do_refresh(self) -> None:
         try:
@@ -120,8 +129,8 @@ class CheckwattApiClient:
                 self._store_tokens(await resp.json())
         except AuthenticationError:
             raise
-        except (ClientResponseError, ClientError) as err:
-            raise ConnectionError(f"Token refresh failed: {type(err).__name__}") from err
+        except (ClientError, TimeoutError) as err:
+            raise ConnectionError(f"Token refresh failed: {_describe(err)}") from err
 
     async def ensure_authenticated(self) -> None:
         """Ensure a valid JWT is available, refreshing silently when needed."""
@@ -163,9 +172,8 @@ class CheckwattApiClient:
                 self._invalidate_jwt_on_401(resp.status)
                 resp.raise_for_status()
                 return await resp.json()
-        except (ClientResponseError, ClientError) as err:
-            # L4: omit query params from error message to avoid leaking values.
-            raise ConnectionError(f"Request to {path} failed: {type(err).__name__}") from err
+        except (ClientError, TimeoutError) as err:
+            raise ConnectionError(f"Request to {path} failed: {_describe(err)}") from err
 
     async def _get_text(self, path: str) -> str:
         url = f"{BASE_URL}{path}"
@@ -176,8 +184,8 @@ class CheckwattApiClient:
                 self._invalidate_jwt_on_401(resp.status)
                 resp.raise_for_status()
                 return (await resp.text()).strip()
-        except (ClientResponseError, ClientError) as err:
-            raise ConnectionError(f"Request to {path} failed: {type(err).__name__}") from err
+        except (ClientError, TimeoutError) as err:
+            raise ConnectionError(f"Request to {path} failed: {_describe(err)}") from err
 
     # ------------------------------------------------------------------
     # API endpoints
@@ -203,10 +211,18 @@ class CheckwattApiClient:
     async def get_price_zone(self) -> str:
         return await self._get_text("/ems/pricezone")
 
-    async def get_spot_prices(self, zone: str, from_date: str, to_date: str) -> dict:
+    async def get_spot_prices(
+        self, zone: str, from_date: str, to_date: str, site_id: int | None
+    ) -> dict:
+        # The web app sends siteId (0 before the site is known), so do the same.
         return await self._get(
             "/ems/spotprice",
-            params={"zone": zone, "fromDate": from_date, "toDate": to_date},
+            params={
+                "zone": zone,
+                "fromDate": from_date,
+                "toDate": to_date,
+                "siteId": site_id or 0,
+            },
         )
 
     async def get_revenue(self, site_id: int, from_date: str, to_date: str) -> dict:
@@ -225,8 +241,8 @@ class CheckwattApiClient:
             ) as resp:
                 resp.raise_for_status()
                 return await resp.json()
-        except (ClientResponseError, ClientError) as err:
-            raise ConnectionError(f"News request failed: {type(err).__name__}") from err
+        except (ClientError, TimeoutError) as err:
+            raise ConnectionError(f"News request failed: {_describe(err)}") from err
 
     async def get_connection_status(self, site_id: int) -> dict:
         """Fetch CM10 diagnostics: connectivity, uptime and inverter temperatures.

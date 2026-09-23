@@ -1,6 +1,7 @@
 """Constants for the CheckWatt integration."""
 
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from homeassistant.const import Platform
 
@@ -14,3 +15,14 @@ ENERGY_UPDATE_INTERVAL = timedelta(minutes=15)
 LOGBOOK_UPDATE_INTERVAL = timedelta(minutes=30)
 DIAG_UPDATE_INTERVAL = timedelta(minutes=5)
 NEWS_UPDATE_INTERVAL = timedelta(hours=4)
+
+# A failed slow update is retried after this instead of its full interval.
+SLOW_RETRY_INTERVAL = timedelta(minutes=5)
+
+# CM10 diagnostics older than this are treated as unknown. The CM10 does not
+# report every cycle — a healthy site's blob can be over an hour old.
+DIAG_MAX_AGE = timedelta(hours=3)
+
+# The API's dates (revenue days, spot price slots, yearly totals) are Swedish
+# local time, regardless of where the HA host runs.
+API_TZ = ZoneInfo("Europe/Stockholm")

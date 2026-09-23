@@ -9,6 +9,8 @@ from datetime import UTC, datetime, timedelta
 
 from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeout
 
+from .const import API_TZ
+
 _LOGGER = logging.getLogger(__name__)
 
 BASE_URL = "https://api.checkwatt.se"
@@ -64,7 +66,8 @@ class CheckwattApiClient:
         try:
             payload_b64 = self._jwt.split(".")[1]
             payload_b64 += "=" * (-len(payload_b64) % 4)
-            claims = json.loads(base64.b64decode(payload_b64))
+            # JWTs use the URL-safe alphabet; b64decode would drop "-" and "_".
+            claims = json.loads(base64.urlsafe_b64decode(payload_b64))
             raw_expiry = datetime.fromtimestamp(claims["exp"], tz=UTC)
             max_expiry = datetime.now(UTC) + timedelta(hours=24)
             self._jwt_expiry = min(raw_expiry, max_expiry)
@@ -244,9 +247,7 @@ class CheckwattApiClient:
 
     async def get_energy_totals(self, meter_ids: list[int]) -> dict:
         """Fetch all-time yearly-grouped totals for the given meter IDs."""
-        from datetime import date
-
-        year = date.today().year
+        year = datetime.now(API_TZ).year
         # aiohttp accepts a list of tuples for repeated query parameters.
         params: list[tuple[str, str | int]] = [
             ("grouping", "3"),

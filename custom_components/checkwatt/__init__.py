@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
@@ -16,6 +15,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import AuthenticationError, CheckwattApiClient
 from .const import (
+    API_TZ,
+    DIAG_MAX_AGE,
     DIAG_UPDATE_INTERVAL,
     DOMAIN,
     ENERGY_UPDATE_INTERVAL,
@@ -24,32 +25,63 @@ from .const import (
     PLATFORMS,
     PRICE_UPDATE_INTERVAL,
     REVENUE_UPDATE_INTERVAL,
+    SLOW_RETRY_INTERVAL,
     UPDATE_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Spot price slot timestamps from the API are naive Swedish local time,
-# regardless of where the HA host runs.
-_PRICE_TZ = ZoneInfo("Europe/Stockholm")
+_DEFAULT_SLOT_LENGTH = timedelta(minutes=15)
+
+# Diagnostics keys cleared when the CM10 has not reported recently.
+_DIAG_KEYS = (
+    "battery_temp_high_c",
+    "battery_temp_low_c",
+    "internet_connection",
+    "cm10_uptime_s",
+    "default_route",
+)
 
 
 def _select_spot_price(prices: list[dict], now_local: datetime) -> float | None:
-    """Return the price of the latest 15-min slot not after *now_local*.
+    """Return the price of the slot covering *now_local*, or None if none does.
 
     *now_local* must be naive Swedish local time, matching the slot timestamps.
+    A slot lasts until the next one starts; the last one is assumed to be as
+    long as the one before it, so an outdated price list yields None rather
+    than its last price forever.
     """
     current: float | None = None
+    current_start: datetime | None = None
+    slot_length = _DEFAULT_SLOT_LENGTH
     for entry in prices:
+        if not isinstance(entry, dict) or entry.get("Value") is None:
+            continue
         try:
             slot = datetime.fromisoformat(entry["Date"])
         except (KeyError, TypeError, ValueError):
             continue
-        if slot <= now_local:
-            current = entry["Value"]
-        else:
-            break
-    return current
+        if slot > now_local:
+            return current
+        if current_start is not None and slot > current_start:
+            slot_length = slot - current_start
+        current, current_start = entry["Value"], slot
+    if current_start is not None and now_local < current_start + slot_length:
+        return current
+    return None
+
+
+def _latest_logbook_ts(entries: list[dict]) -> str | None:
+    """Return the newest timestamp among logbook entries, skipping lines without one."""
+    return max((e["timestamp"] for e in entries if e.get("timestamp")), default=None)
+
+
+def _parse_utc(value: str | None) -> datetime | None:
+    """Parse an ISO 8601 UTC timestamp such as ``2026-09-16T08:13:35Z``."""
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    except (AttributeError, ValueError):
+        return None
 
 
 def _parse_diag_blob(blob: dict) -> dict:
@@ -155,13 +187,8 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
         # Previous CM10 test status, used to detect transitions.
         self._last_test_status: str | None = None
 
-        # Timestamps tracking when slow-update data was last refreshed.
-        self._last_revenue_update: datetime | None = None
-        self._last_price_update: datetime | None = None
-        self._last_energy_update: datetime | None = None
-        self._last_logbook_update: datetime | None = None
-        self._last_diag_update: datetime | None = None
-        self._last_news_update: datetime | None = None
+        # When each slow update is next due; missing means due now.
+        self._next_update: dict[str, datetime] = {}
         self._last_news_ts: str | None = None
 
     # ------------------------------------------------------------------
@@ -236,35 +263,26 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             }
 
             now = datetime.now(UTC)
-
-            if self._due(self._last_revenue_update, REVENUE_UPDATE_INTERVAL):
-                await self._update_revenue(data)
-                self._last_revenue_update = now
-
-            if self._due(self._last_price_update, PRICE_UPDATE_INTERVAL):
-                await self._update_spot_price(data)
-                self._last_price_update = now
-
-            if self._due(self._last_energy_update, ENERGY_UPDATE_INTERVAL):
-                await self._update_energy_totals(data)
-                self._last_energy_update = now
-
-            if self._due(self._last_logbook_update, LOGBOOK_UPDATE_INTERVAL):
-                await self._update_logbook(data)
-                self._last_logbook_update = now
-
-            if self._due(self._last_diag_update, DIAG_UPDATE_INTERVAL):
-                await self._update_diagnostics(data)
-                self._last_diag_update = now
-
-            if self._due(self._last_news_update, NEWS_UPDATE_INTERVAL):
-                await self._update_news(data)
-                self._last_news_update = now
+            for name, interval, update in (
+                ("revenue", REVENUE_UPDATE_INTERVAL, self._update_revenue),
+                ("price", PRICE_UPDATE_INTERVAL, self._update_spot_price),
+                ("energy", ENERGY_UPDATE_INTERVAL, self._update_energy_totals),
+                ("logbook", LOGBOOK_UPDATE_INTERVAL, self._update_logbook),
+                ("diagnostics", DIAG_UPDATE_INTERVAL, self._update_diagnostics),
+                ("news", NEWS_UPDATE_INTERVAL, self._update_news),
+            ):
+                if now < self._next_update.get(name, now):
+                    continue
+                ok = await update(data)
+                # Retry a failed update soon instead of waiting a full interval.
+                self._next_update[name] = now + (
+                    interval if ok else min(interval, SLOW_RETRY_INTERVAL)
+                )
 
             # Re-select the current 15-min slot every cycle so the sensor
             # doesn't lag behind the hourly price fetch.
             data["spot_price_sek_kwh"] = _select_spot_price(
-                self._spot_prices, datetime.now(_PRICE_TZ).replace(tzinfo=None)
+                self._spot_prices, datetime.now(API_TZ).replace(tzinfo=None)
             )
             data["price_zone"] = self._price_zone
 
@@ -304,8 +322,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
         from .sensor import _parse_logbook
 
         _, entries = _parse_logbook(self._logbook_raw)
-        if entries:
-            self._last_logbook_ts = entries[0].get("timestamp")
+        self._last_logbook_ts = _latest_logbook_ts(entries)
 
         self._site_id = await self._client.get_site_id_by_serial(self._rpi_serial)
         _LOGGER.debug(
@@ -317,12 +334,6 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
     # ------------------------------------------------------------------
     # Slow-update helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _due(last: datetime | None, interval: timedelta) -> bool:
-        if last is None:
-            return True
-        return datetime.now(UTC) - last >= interval
 
     def _slow_data(self) -> dict:
         """Return previous slow-update values so they survive fast-update cycles."""
@@ -365,8 +376,8 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             )
         }
 
-    async def _update_revenue(self, data: dict) -> None:
-        today = date.today()
+    async def _update_revenue(self, data: dict) -> bool:
+        today = datetime.now(API_TZ).date()
         month_start = today.replace(day=1)
         try:
             today_resp = await self._client.get_revenue(
@@ -392,10 +403,12 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             )
         except Exception as err:
             _LOGGER.warning("Revenue update failed (%s): %s", type(err).__name__, err)
+            return False
+        return True
 
-    async def _update_spot_price(self, data: dict) -> None:
+    async def _update_spot_price(self, data: dict) -> bool:
         # Use Sweden's "today" — the host may be in a different timezone.
-        today = datetime.now(_PRICE_TZ).date()
+        today = datetime.now(API_TZ).date()
         tomorrow = today + timedelta(days=1)
         try:
             if self._price_zone is None:
@@ -407,8 +420,10 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             self._spot_prices = resp.get("Prices", [])
         except Exception as err:
             _LOGGER.warning("Spot price update failed (%s): %s", type(err).__name__, err)
+            return False
+        return True
 
-    async def _update_logbook(self, data: dict) -> None:
+    async def _update_logbook(self, data: dict) -> bool:
         """Re-fetch logbook and detect new entries since last check."""
         from .sensor import _LOGBOOK_MAX_BYTES, _parse_logbook  # avoid circular at module level
 
@@ -418,7 +433,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             soc_meter = next((m for m in meters if m.get("InstallationType") == "SoC"), None)
             raw = (soc_meter.get("Logbook") or "") if soc_meter else ""
             if not raw:
-                return
+                return True
 
             _, entries = _parse_logbook(raw)
             self._logbook_raw = raw[:_LOGBOOK_MAX_BYTES]
@@ -426,9 +441,8 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
 
             if self._last_logbook_ts is None:
                 # First logbook fetch — record latest timestamp but fire no events.
-                if entries:
-                    self._last_logbook_ts = entries[0].get("timestamp")
-                return
+                self._last_logbook_ts = _latest_logbook_ts(entries)
+                return True
 
             new_entries = [
                 e for e in entries if e.get("timestamp") and e["timestamp"] > self._last_logbook_ts
@@ -436,29 +450,38 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             if new_entries:
                 # Fire oldest-first so automations see them in chronological order.
                 data["new_logbook_entries"] = list(reversed(new_entries))
-                self._last_logbook_ts = new_entries[0].get("timestamp")
+                self._last_logbook_ts = _latest_logbook_ts(new_entries)
         except Exception as err:
             _LOGGER.warning("Logbook update failed (%s): %s", type(err).__name__, err)
+            return False
+        return True
 
-    async def _update_diagnostics(self, data: dict) -> None:
+    async def _update_diagnostics(self, data: dict) -> bool:
         """Fetch CM10 diagnostics: battery temperatures and internet connection."""
         try:
             resp = await self._client.get_connection_status(self._site_id)
-            blob_raw = (resp.get("Current") or {}).get("Blob")
-            if not blob_raw:
-                return
-            blob = json.loads(blob_raw)
+            current = resp.get("Current") or {}
+            blob = json.loads(current["Blob"]) if current.get("Blob") else None
+            # Current is the CM10's latest report, however old — an offline
+            # CM10 would otherwise show its last connection state forever.
+            reported_at = _parse_utc(current.get("Timestamp"))
+            if reported_at is not None and datetime.now(UTC) - reported_at > DIAG_MAX_AGE:
+                blob = None
             if isinstance(blob, dict):
                 data.update(_parse_diag_blob(blob))
+            else:
+                data.update(dict.fromkeys(_DIAG_KEYS))
         except Exception as err:
             _LOGGER.warning("Diagnostics update failed (%s): %s", type(err).__name__, err)
+            return False
+        return True
 
-    async def _update_news(self, data: dict) -> None:
+    async def _update_news(self, data: dict) -> bool:
         """Fetch news and detect items published since the last check."""
         try:
             items = await self._client.get_news()
             if not items:
-                return
+                return True
 
             # Sort ascending by timestamp so we can compare and fire oldest-first.
             items.sort(key=lambda x: x.get("Tidstampel", ""))
@@ -466,7 +489,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             if self._last_news_ts is None:
                 # First fetch — seed timestamp but fire no events.
                 self._last_news_ts = items[-1].get("Tidstampel", "")
-                return
+                return True
 
             new_items = [i for i in items if i.get("Tidstampel", "") > self._last_news_ts]
             if new_items:
@@ -474,8 +497,10 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 self._last_news_ts = new_items[-1].get("Tidstampel", "")
         except Exception as err:
             _LOGGER.warning("News update failed (%s): %s", type(err).__name__, err)
+            return False
+        return True
 
-    async def _update_energy_totals(self, data: dict) -> None:
+    async def _update_energy_totals(self, data: dict) -> bool:
         """Sum all-time yearly measurements for each meter group."""
         meter_groups = {
             "total_solar_kwh": self._solar_ids,
@@ -484,6 +509,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             "total_charge_kwh": self._charge_ids,
             "total_discharge_kwh": self._discharge_ids,
         }
+        ok = True
         for key, ids in meter_groups.items():
             if not ids:
                 continue
@@ -515,3 +541,5 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                     type(err).__name__,
                     err,
                 )
+                ok = False
+        return ok

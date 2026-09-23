@@ -23,6 +23,8 @@ class FakeClient:
         self.price_zone_error: Exception | None = None
         self.energy_error: Exception | None = None
         self.revenue_dates: list[tuple[str, str]] = []
+        self.prices: list[dict] = []
+        self.spot_price_requests: list[tuple] = []
 
     async def ensure_authenticated(self):
         pass
@@ -51,8 +53,9 @@ class FakeClient:
             raise self.price_zone_error
         return "SE4"
 
-    async def get_spot_prices(self, zone, from_date, to_date):
-        return {"Prices": []}
+    async def get_spot_prices(self, zone, from_date, to_date, site_id):
+        self.spot_price_requests.append((zone, from_date, to_date, site_id))
+        return {"Prices": self.prices}
 
     async def get_energy_totals(self, meter_ids):
         if self.energy_error:
@@ -295,6 +298,28 @@ class TestPriceZone:
         data = _refresh(coordinator)
         assert data["price_zone"] == "SE3"
         assert data["update_status"]["price"]["last_error"] is None
+
+    def test_spot_price_works_without_price_zone_endpoint(self):
+        # As in a 2026-09-23 HAR: the web app no longer calls /ems/pricezone.
+        coordinator, client = _coordinator()
+        client.mba = "SE4"
+        client.price_zone_error = ConnectionError("Request to /ems/pricezone failed: HTTP 404")
+        today = datetime.now(checkwatt.API_TZ).replace(tzinfo=None)
+        midnight = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        client.prices = [
+            {"Value": 1.0 + i / 100, "Date": (midnight + timedelta(minutes=15 * i)).isoformat()}
+            for i in range(96)
+        ]
+        data = _refresh(coordinator)
+        assert data["spot_price_sek_kwh"] is not None
+        assert client.spot_price_requests == [
+            (
+                "SE4",
+                midnight.date().isoformat(),
+                (midnight + timedelta(days=1)).date().isoformat(),
+                12345,
+            )
+        ]
 
     def test_falls_back_to_price_zone_endpoint(self):
         coordinator, client = _coordinator()

@@ -234,8 +234,9 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             if new_test_status is not None:
                 self._last_test_status = new_test_status
 
-            # The site's market balance area is its price zone, so the spot
-            # price needn't depend on /ems/pricezone, which is only a fallback.
+            # The site's market balance area is its price zone. The web app
+            # reads it from here and no longer calls /ems/pricezone, which now
+            # returns an HTTP error; it is kept only as a fallback.
             if mba := status.get("Mba"):
                 self._price_zone = mba
 
@@ -434,7 +435,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 self._price_zone = await self._client.get_price_zone()
 
             resp = await self._client.get_spot_prices(
-                self._price_zone, today.isoformat(), tomorrow.isoformat()
+                self._price_zone, today.isoformat(), tomorrow.isoformat(), self._site_id
             )
             self._spot_prices = resp.get("Prices", [])
         except Exception as err:

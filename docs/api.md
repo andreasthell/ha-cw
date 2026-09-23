@@ -576,6 +576,8 @@ Authorization: Bearer {jwt_token}
 
 Swedish price zones: SE1 (north) → SE4 (south).
 
+> ⚠️ **Changed 2026-09-23:** the web app no longer calls this endpoint, and it returns an HTTP error for at least one site. The price zone is the site's market balance area, `Mba` in [`/site/Statuses`](#get-site-statuses-rich-device-status) — use that instead.
+
 ---
 
 ### Get spot prices

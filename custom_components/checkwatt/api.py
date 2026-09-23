@@ -211,10 +211,18 @@ class CheckwattApiClient:
     async def get_price_zone(self) -> str:
         return await self._get_text("/ems/pricezone")
 
-    async def get_spot_prices(self, zone: str, from_date: str, to_date: str) -> dict:
+    async def get_spot_prices(
+        self, zone: str, from_date: str, to_date: str, site_id: int | None
+    ) -> dict:
+        # The web app sends siteId (0 before the site is known), so do the same.
         return await self._get(
             "/ems/spotprice",
-            params={"zone": zone, "fromDate": from_date, "toDate": to_date},
+            params={
+                "zone": zone,
+                "fromDate": from_date,
+                "toDate": to_date,
+                "siteId": site_id or 0,
+            },
         )
 
     async def get_revenue(self, site_id: int, from_date: str, to_date: str) -> dict:

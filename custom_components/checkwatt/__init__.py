@@ -189,8 +189,12 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
 
             test_info: dict = status.get("TestInfo") or {}
             new_test_status = test_info.get("Latest")
+            # A missing status (e.g. an empty Statuses list) is not a change —
+            # otherwise the event would re-fire every cycle until it's back.
             cm10_status_changed = (
-                self._last_test_status is not None and new_test_status != self._last_test_status
+                new_test_status is not None
+                and self._last_test_status is not None
+                and new_test_status != self._last_test_status
             )
             cm10_status_prev = self._last_test_status
             if new_test_status is not None:
@@ -369,10 +373,15 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 self._site_id, today.isoformat(), today.isoformat()
             )
             revenues = today_resp.get("Revenue", [])
-            if revenues:
-                data["today_revenue_sek"] = revenues[0].get("NetRevenue")
-                data["today_revenue_estimate"] = revenues[0].get("Estimate", False)
-                data["today_service_name"] = revenues[0].get("ServiceName")
+            # Days without data are omitted, so an empty list means nothing
+            # earned yet today. Sites running several services get one entry
+            # per service.
+            data["today_revenue_sek"] = sum(r.get("NetRevenue") or 0 for r in revenues)
+            data["today_revenue_estimate"] = any(r.get("Estimate") for r in revenues)
+            # The service describes enrollment, not today's earnings — keep the
+            # last known one rather than going unavailable every night.
+            if services := [r["ServiceName"] for r in revenues if r.get("ServiceName")]:
+                data["today_service_name"] = ", ".join(dict.fromkeys(services))
 
             month_resp = await self._client.get_revenue(
                 self._site_id, month_start.isoformat(), today.isoformat()
@@ -480,12 +489,25 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 continue
             try:
                 resp = await self._client.get_energy_totals(ids)
-                total_wh = sum(
+                values = [
                     m.get("Value", 0)
                     for meter in resp.get("Meters", [])
                     for m in meter.get("Measurements", [])
-                )
-                data[key] = round(total_wh / 1000, 3)  # Wh → kWh
+                ]
+                if not values:
+                    # Publishing 0 would read as a meter reset in HA's
+                    # statistics, and the next real value would be counted as
+                    # the whole lifetime total again in the Energy dashboard.
+                    continue
+                total_kwh = round(sum(values) / 1000, 3)  # Wh → kWh
+                previous = data.get(key)
+                if previous is not None and total_kwh < previous:
+                    # Same risk for a partial response: never go backwards.
+                    _LOGGER.debug(
+                        "Ignoring decrease of %s from %s to %s kWh", key, previous, total_kwh
+                    )
+                    continue
+                data[key] = total_kwh
             except Exception as err:
                 _LOGGER.warning(
                     "Energy total update failed for %s (%s): %s",

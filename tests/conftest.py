@@ -66,7 +66,28 @@ _stub(
     SensorEntityDescription=_SensorEntityDescription,
     SensorStateClass=_enum_stub("SensorStateClass", "MEASUREMENT", "TOTAL", "TOTAL_INCREASING"),
 )
-_stub("homeassistant.components.event", EventEntity=object)
+
+
+class _EventEntity:
+    """Mirrors HA: _trigger_event() only stores the event; it becomes a state
+    change (what automations see) only when async_write_ha_state() runs."""
+
+    def __init__(self):
+        self.published_events: list[tuple[str, dict | None]] = []
+        self._pending_event: tuple[str, dict | None] | None = None
+
+    def _trigger_event(self, event_type, event_attributes=None):
+        if event_type not in self._attr_event_types:
+            raise ValueError(f"Invalid event type {event_type}")
+        self._pending_event = (event_type, event_attributes)
+
+    def async_write_ha_state(self):
+        if self._pending_event is not None:
+            self.published_events.append(self._pending_event)
+            self._pending_event = None
+
+
+_stub("homeassistant.components.event", EventEntity=_EventEntity)
 _stub(
     "homeassistant.const",
     PERCENTAGE="PERCENTAGE",
@@ -89,10 +110,25 @@ class _Generic:
         return cls
 
 
+class _DataUpdateCoordinator(_Generic):
+    def __init__(self, hass, logger, **kwargs):
+        self.hass = hass
+        self.data = None
+
+
+class _CoordinatorEntity(_Generic):
+    def __init__(self, coordinator):
+        super().__init__()
+        self.coordinator = coordinator
+
+    def _handle_coordinator_update(self):
+        self.async_write_ha_state()
+
+
 _stub(
     "homeassistant.helpers.update_coordinator",
-    CoordinatorEntity=_Generic,
-    DataUpdateCoordinator=_Generic,
+    CoordinatorEntity=_CoordinatorEntity,
+    DataUpdateCoordinator=_DataUpdateCoordinator,
     UpdateFailed=Exception,
 )
 _stub(

@@ -1,8 +1,11 @@
 """Tests for sensor helper functions."""
 
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from custom_components.checkwatt.sensor import (
+    LAST_POLL_DESCRIPTION,
+    CheckwattLastPollSensor,
     _friendly_event,
     _logbook_state,
     _op_pref_label,
@@ -132,3 +135,39 @@ class TestLogbookState:
         raw = "[mfrrup ACTIVATED] no timestamp here"
         state = _logbook_state(raw)
         assert "?" in state
+
+
+class TestLastPollSensor:
+    POLLED = datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
+
+    def _sensor(self, success: bool = True, error: Exception | None = None):
+        data = {
+            "rpi_serial": "aabbccddeeff",
+            "last_poll": self.POLLED,
+            "update_status": {
+                "price": {
+                    "last_success": None,
+                    "last_error": "ConnectionError: Request to /ems/pricezone failed: HTTP 404",
+                    "next_attempt": self.POLLED + timedelta(minutes=5),
+                },
+            },
+        }
+        coordinator = SimpleNamespace(data=data, last_update_success=success, last_exception=error)
+        return CheckwattLastPollSensor(coordinator, LAST_POLL_DESCRIPTION)
+
+    def test_value_is_last_successful_poll(self):
+        assert self._sensor().native_value == self.POLLED
+
+    def test_attributes_show_each_slow_update(self):
+        attrs = self._sensor().extra_state_attributes
+        assert attrs["last_error"] is None
+        assert attrs["price"]["last_error"].endswith("HTTP 404")
+        assert attrs["price"]["next_attempt"] == self.POLLED + timedelta(minutes=5)
+
+    def test_failed_refresh_stays_available_with_error(self):
+        sensor = self._sensor(success=False, error=Exception("Error communicating: HTTP 500"))
+        assert sensor.available is True
+        assert sensor.extra_state_attributes["last_error"] == "Error communicating: HTTP 500"
+
+    def test_attributes_are_not_recorded(self):
+        assert {"last_error", "price", "news"} <= CheckwattLastPollSensor._unrecorded_attributes

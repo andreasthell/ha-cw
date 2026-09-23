@@ -38,6 +38,7 @@ class _SensorEntityDescription:
     native_unit_of_measurement: str | None = None
     suggested_display_precision: int | None = None
     icon: str | None = None
+    entity_category: object = None
 
 
 _stub("homeassistant")
@@ -97,12 +98,16 @@ _stub(
     CONF_USERNAME="username",
     CONF_PASSWORD="password",
     Platform=type("Platform", (), {"SENSOR": "sensor", "EVENT": "event"}),
+    EntityCategory=type("EntityCategory", (), {"DIAGNOSTIC": "diagnostic"}),
 )
 _stub("homeassistant.core", HomeAssistant=object)
 _stub("homeassistant.helpers")
 _stub("homeassistant.helpers.device_registry", DeviceInfo=dict)
 _stub("homeassistant.helpers.entity_platform", AddEntitiesCallback=object)
 _stub("homeassistant.helpers.typing", StateType=object)
+_stub("homeassistant.util")
+_stub("homeassistant.util.dt", as_local=lambda value: value)
+sys.modules["homeassistant.util"].dt = sys.modules["homeassistant.util.dt"]
 
 
 class _Generic:
@@ -145,11 +150,22 @@ _stub(
 )
 _stub("homeassistant.exceptions", ConfigEntryAuthFailed=Exception)
 
+
 # Third-party stubs
+class _ClientError(Exception):
+    pass
+
+
+class _ClientResponseError(_ClientError):
+    def __init__(self, request_info=None, history=(), *, status=0, message=""):
+        super().__init__(message)
+        self.status = status
+
+
 _stub(
     "aiohttp",
-    ClientError=Exception,
-    ClientResponseError=Exception,
+    ClientError=_ClientError,
+    ClientResponseError=_ClientResponseError,
     ClientSession=object,
     ClientTimeout=lambda **kw: kw,
 )

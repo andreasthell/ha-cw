@@ -16,6 +16,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
+    EntityCategory,
     UnitOfEnergy,
     UnitOfPower,
     UnitOfTemperature,
@@ -25,9 +26,10 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import CheckwattCoordinator
-from .const import DOMAIN
+from .const import DOMAIN, SLOW_UPDATES
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -347,6 +349,15 @@ SENSOR_DESCRIPTIONS: tuple[CheckwattSensorDescription, ...] = (
 )
 
 
+LAST_POLL_DESCRIPTION = CheckwattSensorDescription(
+    key="last_poll",
+    translation_key="last_poll",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda d: d.get("last_poll"),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -355,7 +366,10 @@ async def async_setup_entry(
     """Set up CheckWatt sensors from a config entry."""
     coordinator: CheckwattCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        CheckwattSensor(coordinator, description) for description in SENSOR_DESCRIPTIONS
+        [
+            *(CheckwattSensor(coordinator, description) for description in SENSOR_DESCRIPTIONS),
+            CheckwattLastPollSensor(coordinator, LAST_POLL_DESCRIPTION),
+        ]
     )
 
 
@@ -417,3 +431,36 @@ class CheckwattSensor(CoordinatorEntity[CheckwattCoordinator], SensorEntity):
                 "default_route": self.coordinator.data.get("default_route"),
             }
         return None
+
+
+class CheckwattLastPollSensor(CheckwattSensor):
+    """When the API was last polled successfully.
+
+    Attributes show the last refresh's error and, per slow update, its last
+    success, last error and next attempt, so a failing endpoint is visible
+    without digging through the log.
+    """
+
+    # These change with every poll; their history isn't worth the storage.
+    _unrecorded_attributes = frozenset({"last_error", *SLOW_UPDATES})
+
+    @property
+    def available(self) -> bool:
+        # Stay available when a refresh fails: the stale time and the error
+        # are exactly what this sensor is for.
+        return self.native_value is not None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        coordinator = self.coordinator
+        attrs: dict = {
+            "last_error": (
+                None if coordinator.last_update_success else str(coordinator.last_exception)
+            )
+        }
+        for name, status in (coordinator.data.get("update_status") or {}).items():
+            attrs[name] = {
+                key: dt_util.as_local(value) if isinstance(value, datetime) else value
+                for key, value in status.items()
+            }
+        return attrs

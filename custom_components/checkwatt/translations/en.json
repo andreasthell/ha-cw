@@ -56,7 +56,8 @@
       "active_service": {"name": "Active Grid Service"},
       "price_zone": {"name": "Price Zone"},
       "logbook": {"name": "Logbook"},
-      "firmware_version": {"name": "Firmware Version"}
+      "firmware_version": {"name": "Firmware Version"},
+      "last_poll": {"name": "Last API Poll"}
     },
     "event": {
       "cm10_test_status": {

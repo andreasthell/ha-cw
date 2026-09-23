@@ -120,9 +120,9 @@ logger:
     custom_components.checkwatt: debug
 ```
 
-### Energisensorer backar i värde
+### Energisensorer står still
 
-Om `total_increasing`-sensorerna ibland minskar beror det troligen på att CheckWatt-API:et returnerar justerade historiska värden. HA hanterar detta automatiskt och ignorerar minskningar.
+Integrationen ignorerar tomma svar och minskningar av livstidsvärdena. HA tolkar annars en kraftig minskning som att mätaren nollställts och räknar nästa värde som ny energi i Energi-dashboarden. Om CheckWatt-API:et justerar historiska värden nedåt står sensorn därför still tills den verkliga summan passerat det tidigare värdet.
 
 ---
 

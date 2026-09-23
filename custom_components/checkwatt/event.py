@@ -92,6 +92,12 @@ class _CheckwattEventBase(CoordinatorEntity[CheckwattCoordinator], EventEntity):
     def _process_update(self, data: dict) -> None:
         raise NotImplementedError
 
+    def _fire(self, event_type: str, attributes: dict) -> None:
+        # HA publishes only the latest event per state write, so write after
+        # each one — batching them would drop all but the last.
+        self._trigger_event(event_type, attributes)
+        self.async_write_ha_state()
+
 
 class CheckwattCm10StatusEvent(_CheckwattEventBase):
     """Fires when CM10 TestInfo.Latest changes."""
@@ -109,7 +115,7 @@ class CheckwattCm10StatusEvent(_CheckwattEventBase):
             return
         ti = data.get("test_info", {})
         status = ti.get("Latest")
-        self._trigger_event(
+        self._fire(
             _map_cm10_event_type(status),
             {
                 "status": status,
@@ -133,7 +139,7 @@ class CheckwattLogbookEvent(_CheckwattEventBase):
 
     def _process_update(self, data: dict) -> None:
         for entry in data.get("new_logbook_entries", []):
-            self._trigger_event(
+            self._fire(
                 _map_logbook_event_type(entry.get("event", "")),
                 {
                     "event": entry.get("event"),
@@ -157,7 +163,7 @@ class CheckwattNewsEvent(_CheckwattEventBase):
     def _process_update(self, data: dict) -> None:
         for item in data.get("new_news_items", []):
             title = item.get("RubrikEN") or item.get("Rubrik", "")
-            self._trigger_event(
+            self._fire(
                 _map_news_event_type(item.get("Kategori", "")),
                 {
                     "title": title,

@@ -8,34 +8,72 @@ Integrera ditt CheckWatt-batterisystem med Home Assistant via EnergyInBalance-po
 
 ## Funktioner
 
-### Sensorer (19 st)
+### Sensorer
 
-| Sensor | Enhet | Uppdateringsintervall |
+Alla sensorer hamnar under en enhet namngiven efter din anläggning. Namnen nedan är de svenska; med engelska som språk i HA visas de engelska namnen.
+
+**Effekt och batteri**
+
+| Sensor | Enhet | Uppdateras |
 |---|---|---|
 | Solkraft | W | 60 s |
 | Batterieffekt *(+ = laddning, − = urladdning)* | W | 60 s |
 | Näteffekt *(+ = köper, − = säljer)* | W | 60 s |
 | Batteri laddningsnivå | % | 60 s |
+| Tillgänglig laddeffekt | kW | 60 s |
+| Tillgänglig urladdningseffekt | kW | 60 s |
+| Batteritemperatur högsta | °C | 5 min |
+| Batteritemperatur lägsta | °C | 5 min |
+
+**Intäkter och priser**
+
+| Sensor | Enhet | Uppdateras |
+|---|---|---|
 | Dagens intäkt | SEK | 15 min |
 | Månadsintäkt | SEK | 15 min |
 | Aktiv nättjänst *(mFRR CM, FCR-D, …)* | – | 15 min |
-| Spotpris exkl. moms | SEK/kWh | 60 min |
-| Spotpris inkl. moms | SEK/kWh | 60 min |
+| Spotpris *(exkl. moms)* | SEK/kWh | varje kvart *(priserna hämtas varje timme)* |
+| Spotpris inkl. moms | SEK/kWh | varje kvart *(priserna hämtas varje timme)* |
+| Priszon | – | 60 s |
+
+**Energi (livstidsvärden för Energi-dashboarden)**
+
+| Sensor | Enhet | Uppdateras |
+|---|---|---|
 | Total solenergi | kWh | 15 min |
 | Total nätimport | kWh | 15 min |
 | Total nätexport | kWh | 15 min |
 | Total batteriladdning | kWh | 15 min |
 | Total batteriurladdning | kWh | 15 min |
-| CM10 senast sedd | tidsstämpel | 60 s |
-| Växelriktare senast sedd | tidsstämpel | 60 s |
-| Driftläge | – | 60 s |
-| Priszon | – | 60 min |
 
 Energisensorerna har `state_class: total_increasing` och fungerar direkt med **HA:s Energi-dashboard**.
 
+**Status**
+
+| Sensor | Enhet | Uppdateras |
+|---|---|---|
+| CM10 Status | – | 60 s |
+| CM10 senast sedd | tidsstämpel | 60 s |
+| Växelriktare senast sedd | tidsstämpel | 60 s |
+| Driftläge | – | 60 s |
+| Firmware-version | – | 60 s |
+| Internetanslutning | – | 5 min |
+| Loggbok *(senaste händelsen; de fem senaste som attribut)* | – | 30 min |
+| Senaste API-hämtning *(diagnostik, se [Felsökning](#sensorer-visar-otillgänglig))* | tidsstämpel | 60 s |
+
+### Händelser
+
+Händelseentiteter som kan användas som utlösare i automationer:
+
+| Händelse | Utlöses när | Kontrolleras |
+|---|---|---|
+| CM10 Teststatus | CM10:ns teststatus ändras | 60 s |
+| Logbokshändelse | en ny rad dyker upp i anläggningens loggbok | 30 min |
+| Nyhet | EnergyInBalance publicerar en ny nyhet | 4 h |
+
 ### Autentisering
 
-Integrationen loggar in **en gång** och återanvänder JWT-token i ~2 timmar. Token förnyas sedan automatiskt via refresh-token (giltig 7 dagar) utan att lösenordet behöver skickas på nytt. Full ominloggning sker automatiskt om refresh-token gått ut.
+Integrationen loggar in **en gång** och återanvänder JWT-token, som är giltig i ~15 minuter. Token förnyas sedan automatiskt via refresh-token (giltig 14 dagar) utan att lösenordet behöver skickas på nytt. Full ominloggning sker automatiskt om refresh-token gått ut. Om inloggningen nekas, till exempel för att lösenordet har ändrats, ber HA dig att ange uppgifterna igen.
 
 ---
 
@@ -52,7 +90,7 @@ Integrationen loggar in **en gång** och återanvänder JWT-token i ~2 timmar. T
 2. Klicka på **⋮** (tre punkter) längst upp till höger → **Custom repositories**
 3. Fyll i:
    - **Repository:** `https://github.com/andreasthell/ha-cw`
-   - **Category:** Integration
+   - **Type** (*Category* i äldre HACS): Integration
 4. Klicka **Add**
 
 ### Steg 2 – Installera integrationen
@@ -63,10 +101,10 @@ Integrationen loggar in **en gång** och återanvänder JWT-token i ~2 timmar. T
 
 ### Steg 3 – Konfigurera
 
-1. Gå till **Inställningar → Enheter & tjänster → Lägg till integration**
+1. Gå till **Inställningar → Enheter och tjänster → Lägg till integration**
 2. Sök efter **CheckWatt**
 3. Ange din **e-postadress** och **lösenord** för [energyinbalance.se](https://energyinbalance.se)
-4. Klicka **Skicka**
+4. Klicka **Bekräfta**
 
 Alla sensorer visas nu under en enhet namngiven efter din anläggning.
 
@@ -88,14 +126,21 @@ Om du föredrar att installera utan HACS:
 
 ## HA Energi-dashboard
 
-Energisensorerna med livstids-kWh-värden kan läggas direkt till i HA:s inbyggda Energi-dashboard:
+Energisensorerna med livstids-kWh-värden kan läggas direkt till i HA:s inbyggda Energi-dashboard. Gå till **Inställningar → Kontrollpaneler → Energi** och lägg till:
 
-1. Gå till **Energi** i sidomenyn → **Konfigurera Energi**
-2. Lägg till:
-   - **Solproduktion:** *Total solenergi*
-   - **Nätkonsumption:** *Total nätimport*
-   - **Nätåtermatning:** *Total nätexport*
-   - **Batterilagring:** *Total batteriladdning* + *Total batteriurladdning*
+- **Elnät → Lägg till nätanslutning**
+  - *Energi importerat från nätet:* **Total nätimport**
+  - *Energi exporterat till nätet:* **Total nätexport**
+  - *Effektmätning* (valfritt): typ **Standard** med **Näteffekt**
+- **Solpaneler → Lägg till solenergiproduktion**
+  - *Solenergiproduktion:* **Total solenergi**
+  - *Soleffektproduktion* (valfritt): **Solkraft**
+- **Hembatteri → Lägg till batterisystem**
+  - *Energi laddat in i batteriet:* **Total batteriladdning**
+  - *Energi urladdat ifrån batteriet:* **Total batteriurladdning**
+  - *Batteriets laddningssensor* (valfritt): **Batteri laddningsnivå**
+
+Etiketterna är från Home Assistant 2026.9; äldre versioner kan kalla fälten något annat. Det kan ta upp till två timmar innan ny data syns i dashboarden.
 
 ---
 
@@ -103,17 +148,17 @@ Energisensorerna med livstids-kWh-värden kan läggas direkt till i HA:s inbyggd
 
 ### Integrationen hittas inte i HACS
 
-Kontrollera att du lade till repot som category **Integration** (inte Automation).
+Kontrollera att du lade till repot med typen **Integration** (inte till exempel Dashboard eller Template).
 
-### "Invalid email address or password"
+### "Felaktig e-postadress eller lösenord"
 
-Verifiera att du kan logga in på [energyinbalance.se](https://energyinbalance.se) med samma uppgifter.
+Verifiera att du kan logga in på [energyinbalance.se](https://energyinbalance.se) med samma uppgifter. Står det i stället *Kunde inte ansluta till CheckWatt-API:et* nådde HA inte API:et; kontrollera nätverksanslutningen och försök igen.
 
-### Sensorer visar "Unavailable"
+### Sensorer visar "Otillgänglig"
 
 Öppna diagnostiksensorn **Senaste API-hämtning** på CheckWatt-enheten. Dess värde är när API:et senast hämtades utan fel. Attributen visar senaste felet och, för varje långsam hämtning (`revenue`, `price`, `energy`, `logbook`, `diagnostics`, `news`), när den senast lyckades, vad som gick fel (till exempel `HTTP 404`) och när nästa försök görs.
 
-För mer detaljer, aktivera debug-loggning i `configuration.yaml` för att se detaljerade felmeddelanden:
+Misslyckade hämtningar loggas också som varningar under **Inställningar → System → Loggar**. Debug-loggning visar dessutom bland annat anläggningens serienummer och site-id vid start samt energivärden som ignoreras. Slå på den under **Inställningar → Enheter och tjänster → CheckWatt → ⋮ → Aktivera felsökningsloggning**, eller i `configuration.yaml`:
 
 ```yaml
 logger:
@@ -124,7 +169,7 @@ logger:
 
 ### Energisensorer står still
 
-Integrationen ignorerar tomma svar och minskningar av livstidsvärdena. HA tolkar annars en kraftig minskning som att mätaren nollställts och räknar nästa värde som ny energi i Energi-dashboarden. Om CheckWatt-API:et justerar historiska värden nedåt står sensorn därför still tills den verkliga summan passerat det tidigare värdet.
+Integrationen ignorerar tomma svar, och minskningar jämfört med föregående värde sedan HA startade. HA tolkar annars en kraftig minskning som att mätaren nollställts och räknar nästa värde som ny energi i Energi-dashboarden. Om CheckWatt-API:et justerar historiska värden nedåt står sensorn därför still tills den verkliga summan passerat det tidigare värdet.
 
 ---
 

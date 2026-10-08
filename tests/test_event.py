@@ -1,10 +1,12 @@
 """Tests for the event entities and their helper functions."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from custom_components.checkwatt.event import (
     CheckwattCm10StatusEvent,
     CheckwattLogbookEvent,
+    CheckwattMfrrActivationEvent,
     CheckwattNewsEvent,
     _map_cm10_event_type,
     _map_logbook_event_type,
@@ -64,6 +66,35 @@ class TestEventPublishing:
         event_type, attributes = entity.published_events[0]
         assert event_type == "deactivated"
         assert attributes["previous_status"] == "Activated"
+
+    def test_every_mfrr_activation_is_published(self):
+        entity = _entity(CheckwattMfrrActivationEvent)
+        start = datetime(2026, 10, 7, 4, 34, tzinfo=UTC)
+        end = datetime(2026, 10, 7, 5, 5, tzinfo=UTC)
+        activations = [
+            {
+                "direction": "up",
+                "start": start,
+                "end": end,
+                "power_w": 5614.48,
+                "ramp_up_s": 600,
+                "ramp_down_s": 600,
+            },
+            {
+                "direction": "down",
+                "start": end,
+                "end": None,
+                "power_w": None,
+                "ramp_up_s": None,
+                "ramp_down_s": None,
+            },
+        ]
+        _update(entity, new_mfrr_activations=activations)
+        assert [t for t, _ in entity.published_events] == ["up", "down"]
+        attributes = entity.published_events[0][1]
+        assert attributes["power_w"] == 5614
+        assert (attributes["start"], attributes["end"]) == (start, end)
+        assert entity.published_events[1][1]["end"] is None
 
     def test_cycle_without_new_events_publishes_nothing(self):
         entity = _entity(CheckwattLogbookEvent)

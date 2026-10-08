@@ -224,6 +224,15 @@ SENSOR_DESCRIPTIONS: tuple[CheckwattSensorDescription, ...] = (
         suggested_display_precision=2,
         value_fn=lambda d: d.get("monthly_revenue_sek"),
     ),
+    CheckwattSensorDescription(
+        key="total_revenue_sek",
+        translation_key="total_revenue",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        native_unit_of_measurement="SEK",
+        suggested_display_precision=2,
+        value_fn=lambda d: d.get("total_revenue_sek"),
+    ),
     # ---- Spot price ---------------------------------------------------------
     CheckwattSensorDescription(
         key="spot_price_sek_kwh",
@@ -414,6 +423,8 @@ class CheckwattSensor(CoordinatorEntity[CheckwattCoordinator], SensorEntity):
                 "result": ti.get("Result"),
                 "failed_in_a_row": ti.get("FailedInARow"),
             }
+        if key == "total_revenue_sek":
+            return {"by_service": self.coordinator.data.get("total_revenue_by_service")}
         if key == "logbook":
             _, entries = _parse_logbook(self.coordinator.data.get("logbook_raw"))
             recent = [

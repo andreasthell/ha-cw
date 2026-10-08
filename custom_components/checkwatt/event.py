@@ -9,7 +9,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import CheckwattCoordinator
+from . import CheckwattCoordinator, activation_attributes
 from .const import DOMAIN
 
 
@@ -60,6 +60,7 @@ async def async_setup_entry(
             CheckwattCm10StatusEvent(coordinator),
             CheckwattLogbookEvent(coordinator),
             CheckwattNewsEvent(coordinator),
+            CheckwattMfrrActivationEvent(coordinator),
         ]
     )
 
@@ -173,3 +174,19 @@ class CheckwattNewsEvent(_CheckwattEventBase):
                     "timestamp": item.get("Tidstampel", ""),
                 },
             )
+
+
+class CheckwattMfrrActivationEvent(_CheckwattEventBase):
+    """Fires for each new mFRR activation, with "up" or "down" as event type."""
+
+    _attr_translation_key = "mfrr_activation"
+    _attr_icon = "mdi:transmission-tower-export"
+    _attr_event_types = ["up", "down"]
+
+    @property
+    def _key(self) -> str:
+        return "mfrr_activation_event"
+
+    def _process_update(self, data: dict) -> None:
+        for activation in data.get("new_mfrr_activations", []):
+            self._fire(activation["direction"], activation_attributes(activation))

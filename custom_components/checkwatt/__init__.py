@@ -12,18 +12,22 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import AuthenticationError, CheckwattApiClient
 from .const import (
+    ACTIVATION_UPDATE_INTERVAL,
     API_TZ,
     DIAG_MAX_AGE,
     DIAG_UPDATE_INTERVAL,
     DOMAIN,
     ENERGY_UPDATE_INTERVAL,
     LOGBOOK_UPDATE_INTERVAL,
+    MFRR_SEEN_RETENTION,
     NEWS_UPDATE_INTERVAL,
     PLATFORMS,
     PRICE_UPDATE_INTERVAL,
+    REVENUE_HISTORY_START,
     REVENUE_UPDATE_INTERVAL,
     SLOW_RETRY_INTERVAL,
     UPDATE_INTERVAL,
@@ -127,6 +131,55 @@ def _parse_diag_blob(blob: dict) -> dict:
     }
 
 
+def _parse_mfrr_activations(schedule: dict) -> list[dict]:
+    """Extract mFRR activations from an /ems/ActivationSchedule response, oldest first.
+
+    Each is {"direction": "up" | "down", "start", "end", "power_w",
+    "ramp_up_s", "ramp_down_s"}, with start and end as UTC datetimes.
+    """
+    activations = []
+    for direction, key in (("up", "MfrrUpActivation"), ("down", "MfrrDownActivation")):
+        items = schedule.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            start = _parse_utc(item.get("Time"))
+            if start is None:
+                continue
+            activations.append(
+                {
+                    "direction": direction,
+                    "start": start,
+                    "end": _parse_utc(item.get("EndTime")),
+                    "power_w": item.get("Power"),
+                    "ramp_up_s": item.get("RampUpTime"),
+                    "ramp_down_s": item.get("RampDownTime"),
+                }
+            )
+    activations.sort(key=lambda a: a["start"])
+    return activations
+
+
+def _is_ongoing(activation: dict, now: datetime) -> bool:
+    """Whether *activation* covers *now*; one without an end has not ended yet."""
+    end = activation["end"]
+    return activation["start"] <= now and (end is None or now < end)
+
+
+def activation_attributes(activation: dict) -> dict:
+    """State attributes describing one mFRR activation."""
+    return {
+        "direction": activation["direction"],
+        "start": dt_util.as_local(activation["start"]),
+        "end": dt_util.as_local(activation["end"]) if activation["end"] else None,
+        "power_w": round(activation["power_w"]) if activation["power_w"] is not None else None,
+        "ramp_up_s": activation["ramp_up_s"],
+        "ramp_down_s": activation["ramp_down_s"],
+    }
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up CheckWatt from a config entry."""
     # H2: dedicated session with explicit SSL verification.
@@ -197,6 +250,11 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
         # the "Last API poll" sensor; a missing entry means due now.
         self._update_status: dict[str, dict] = {}
         self._last_news_ts: str | None = None
+
+        # mFRR activations from the latest schedule, and the (direction, start)
+        # of those already seen; None until the first successful fetch.
+        self._mfrr_activations: list[dict] = []
+        self._seen_mfrr: set[tuple[str, datetime]] | None = None
 
     # ------------------------------------------------------------------
     # Main update
@@ -271,6 +329,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 "cm10_status_prev": cm10_status_prev,
                 "new_logbook_entries": [],
                 "new_news_items": [],
+                "new_mfrr_activations": [],
                 # Carry over slow-update values from previous cycle.
                 **self._slow_data(),
             }
@@ -282,6 +341,7 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 ("energy", ENERGY_UPDATE_INTERVAL, self._update_energy_totals),
                 ("logbook", LOGBOOK_UPDATE_INTERVAL, self._update_logbook),
                 ("diagnostics", DIAG_UPDATE_INTERVAL, self._update_diagnostics),
+                ("activations", ACTIVATION_UPDATE_INTERVAL, self._update_activations),
                 ("news", NEWS_UPDATE_INTERVAL, self._update_news),
             ):
                 status = self._update_status.setdefault(
@@ -304,6 +364,9 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 self._spot_prices, datetime.now(API_TZ).replace(tzinfo=None)
             )
             data["price_zone"] = self._price_zone
+            # Like the spot price, re-evaluated every cycle so the state follows
+            # the activation's start and end rather than the fetch interval.
+            self._set_mfrr_state(data, now)
             data["last_poll"] = now
             data["update_status"] = {name: dict(st) for name, st in self._update_status.items()}
 
@@ -364,6 +427,8 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 "today_revenue_estimate": False,
                 "today_service_name": None,
                 "monthly_revenue_sek": None,
+                "total_revenue_sek": None,
+                "total_revenue_by_service": None,
                 "total_solar_kwh": None,
                 "total_import_kwh": None,
                 "total_export_kwh": None,
@@ -384,6 +449,8 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
                 "today_revenue_estimate",
                 "today_service_name",
                 "monthly_revenue_sek",
+                "total_revenue_sek",
+                "total_revenue_by_service",
                 "total_solar_kwh",
                 "total_import_kwh",
                 "total_export_kwh",
@@ -422,6 +489,21 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
             data["monthly_revenue_sek"] = sum(
                 r.get("NetRevenue") or 0 for r in month_resp.get("Revenue", [])
             )
+
+            total_resp = await self._client.get_revenue(
+                self._site_id, REVENUE_HISTORY_START, today.isoformat(), resolution="month"
+            )
+            by_service: dict[str, float] = {}
+            for r in total_resp.get("Revenue", []):
+                name = r.get("ServiceName") or "Unknown"
+                by_service[name] = by_service.get(name, 0) + (r.get("NetRevenue") or 0)
+            # No revenue ever is far likelier a glitch than the truth for a site
+            # that has had some, so keep the previous total then.
+            if by_service or data.get("total_revenue_sek") is None:
+                data["total_revenue_sek"] = round(sum(by_service.values()), 2)
+                data["total_revenue_by_service"] = {
+                    name: round(value, 2) for name, value in by_service.items()
+                }
         except Exception as err:
             return _failure("Revenue update", err)
         return None
@@ -492,6 +574,40 @@ class CheckwattCoordinator(DataUpdateCoordinator[dict]):
         except Exception as err:
             return _failure("Diagnostics update", err)
         return None
+
+    async def _update_activations(self, data: dict) -> str | None:
+        """Fetch mFRR activations and detect those not seen before."""
+        try:
+            schedule = await self._client.get_activation_schedule()
+            activations = _parse_mfrr_activations(schedule)
+        except Exception as err:
+            return _failure("Activation update", err)
+
+        self._mfrr_activations = activations
+        keys = {(a["direction"], a["start"]) for a in activations}
+        if self._seen_mfrr is None:
+            # First fetch — remember what is listed but fire no events.
+            self._seen_mfrr = keys
+            return None
+
+        data["new_mfrr_activations"] = [
+            a for a in activations if (a["direction"], a["start"]) not in self._seen_mfrr
+        ]
+        cutoff = datetime.now(UTC) - MFRR_SEEN_RETENTION
+        self._seen_mfrr = {key for key in self._seen_mfrr if key[1] >= cutoff} | keys
+        return None
+
+    def _set_mfrr_state(self, data: dict, now: datetime) -> None:
+        """Set the ongoing mFRR activation, or the latest one when none is ongoing."""
+        if self._seen_mfrr is None:
+            # Never fetched: unknown rather than "not activated".
+            data["mfrr_activation_active"] = None
+            data["mfrr_activation"] = None
+            return
+        started = [a for a in self._mfrr_activations if a["start"] <= now]
+        ongoing = [a for a in started if _is_ongoing(a, now)]
+        data["mfrr_activation_active"] = bool(ongoing)
+        data["mfrr_activation"] = (ongoing or started or [None])[-1]
 
     async def _update_news(self, data: dict) -> str | None:
         """Fetch news and detect items published since the last check."""

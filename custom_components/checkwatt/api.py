@@ -225,11 +225,18 @@ class CheckwattApiClient:
             },
         )
 
-    async def get_revenue(self, site_id: int, from_date: str, to_date: str) -> dict:
+    async def get_revenue(
+        self, site_id: int, from_date: str, to_date: str, resolution: str = "day"
+    ) -> dict:
+        """Fetch revenue per service and day, or per month with *resolution* "month"."""
         return await self._get(
             f"/revenue/{site_id}",
-            params={"from": from_date, "to": to_date, "resolution": "day"},
+            params={"from": from_date, "to": to_date, "resolution": resolution},
         )
+
+    async def get_activation_schedule(self) -> dict:
+        """Fetch the EMS schedule, including the site's recent mFRR activations."""
+        return await self._get("/ems/ActivationSchedule")
 
     async def get_news(self) -> list:
         """Fetch EIB news items. No auth sent — endpoint is public."""

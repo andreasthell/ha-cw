@@ -37,6 +37,7 @@
       "battery_soc": {"name": "Batteri laddningsnivå"},
       "today_revenue": {"name": "Dagens intäkt"},
       "monthly_revenue": {"name": "Månadsintäkt"},
+      "total_revenue": {"name": "Total intäkt"},
       "spot_price": {"name": "Spotpris"},
       "spot_price_incl_vat": {"name": "Spotpris inkl. moms"},
       "total_solar_energy": {"name": "Total solenergi"},
@@ -58,6 +59,9 @@
       "logbook": {"name": "Loggbok"},
       "firmware_version": {"name": "Firmware-version"},
       "last_poll": {"name": "Senaste API-hämtning"}
+    },
+    "binary_sensor": {
+      "mfrr_activation": {"name": "mFRR-aktivering pågår"}
     },
     "event": {
       "cm10_test_status": {
@@ -85,6 +89,13 @@
           "news": "Nyhet",
           "update": "Uppdatering",
           "other": "Övrigt"
+        }
+      },
+      "mfrr_activation": {
+        "name": "mFRR-aktivering",
+        "event_types": {
+          "up": "Uppreglering",
+          "down": "Nedreglering"
         }
       }
     }

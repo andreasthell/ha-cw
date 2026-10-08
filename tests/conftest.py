@@ -89,6 +89,7 @@ class _EventEntity:
 
 
 _stub("homeassistant.components.event", EventEntity=_EventEntity)
+_stub("homeassistant.components.binary_sensor", BinarySensorEntity=object)
 _stub(
     "homeassistant.const",
     PERCENTAGE="PERCENTAGE",
@@ -97,7 +98,11 @@ _stub(
     UnitOfTemperature=type("UnitOfTemperature", (), {"CELSIUS": "°C"}),
     CONF_USERNAME="username",
     CONF_PASSWORD="password",
-    Platform=type("Platform", (), {"SENSOR": "sensor", "EVENT": "event"}),
+    Platform=type(
+        "Platform",
+        (),
+        {"SENSOR": "sensor", "BINARY_SENSOR": "binary_sensor", "EVENT": "event"},
+    ),
     EntityCategory=type("EntityCategory", (), {"DIAGNOSTIC": "diagnostic"}),
 )
 _stub("homeassistant.core", HomeAssistant=object)

@@ -37,6 +37,7 @@
       "battery_soc": {"name": "Battery State of Charge"},
       "today_revenue": {"name": "Today's Revenue"},
       "monthly_revenue": {"name": "Monthly Revenue"},
+      "total_revenue": {"name": "Total Revenue"},
       "spot_price": {"name": "Spot Price"},
       "spot_price_incl_vat": {"name": "Spot Price incl. VAT"},
       "total_solar_energy": {"name": "Total Solar Energy"},
@@ -58,6 +59,9 @@
       "logbook": {"name": "Logbook"},
       "firmware_version": {"name": "Firmware Version"},
       "last_poll": {"name": "Last API Poll"}
+    },
+    "binary_sensor": {
+      "mfrr_activation": {"name": "mFRR Activation Active"}
     },
     "event": {
       "cm10_test_status": {
@@ -85,6 +89,13 @@
           "news": "News",
           "update": "Update",
           "other": "Other"
+        }
+      },
+      "mfrr_activation": {
+        "name": "mFRR Activation",
+        "event_types": {
+          "up": "Up Regulation",
+          "down": "Down Regulation"
         }
       }
     }

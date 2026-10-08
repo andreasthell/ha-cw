@@ -5,7 +5,7 @@ Web app: `https://energyinbalance.se`
 
 > Reverse-engineered from browser traffic. Not an official API. Subject to change without notice.
 >
-> Last verified against a HAR export from the updated EnergyInBalance web app on **2026-09-01**.
+> Last verified against a HAR export of the EnergyInBalance dashboard on **2026-10-08** (previously 2026-09-01). Changes found in that export are marked *2026-10*.
 >
 > All examples come from a **single site** (Goodwe inverter, SE4, enrolled in mFRR and FCR-D). Not all sites use the same grid services — a site may run FCR-D only, mFRR only, FCR-N, or none at all — so service-specific fields will differ: `Portfolios` on `/site/{site_id}`, `Service` on `/site/Statuses`, `ServiceName` in `/revenue/{site_id}`, and the mFRR/FCR fields in `/ems/ActivationSchedule` (`FrequencyPower`, `Schedule` activation types, mFRR SoC limits in `UserSetting`). Consumers must treat these as dynamic — never hardcode a service name or assume a field is populated.
 
@@ -97,6 +97,8 @@ Returns customer info and all associated meters. The key meter types found in th
 
 The `SoC` meter carries `RpiSerial` (the CM10 device serial), `RpiModel`, and a `Comments`/`Logbook` field with operational history.
 
+Fields seen 2026-10 that were not documented before (they may be older): `InvoiceDetail` (null) at the top level, and on every meter `BatteryCapacityKwh` (set on the `SoC` meter, e.g. `13.1`; null elsewhere), `HasBattery`, `BatteryConf`, `MeterSolarAngles` (array), `MeterConnectedToMeter` (array), `RpiSystem`, `TimeZone`, `DisplayName` and `DatastreamId` (e.g. `aabbccddeeff_SoC`, `aabbccddeeff_energyImport`). `HasBattery` is `false` even on a site with a battery, so do not rely on it.
+
 **Response excerpt:**
 ```json
 {
@@ -160,6 +162,7 @@ Authorization: Bearer {jwt_token}
   },
   "ShouldHaveGeneratedEmsSchedule": true,
   "MainFuseSize": 20,
+  "UnmeteredSolarWatt": 0,
   "TariffId": 3618,
   "NextTariffId": null,
   "NextTariffEffectiveFrom": null,
@@ -182,6 +185,8 @@ Authorization: Bearer {jwt_token}
 `Portfolios` lists the active grid services the site participates in (FCR-D up/down, mFRR, etc.).
 
 New fields 2026-09: `ShouldHaveGeneratedEmsSchedule`, `NextTariffId`, `NextTariffEffectiveFrom` (upcoming tariff change, null when none), `Reseller.Url`, `Reseller.SiteSupport`.
+
+New field 2026-10: `UnmeteredSolarWatt` (W; presumably solar capacity not measured by CheckWatt).
 
 ---
 
@@ -235,12 +240,13 @@ Preferred over the old `/register/checkrpiv2` and `/asset/status` endpoints.
 New fields 2026-09: `ClientId`, `RpiSerial`, `Email`, `StreetAddress`. `Service` is now populated with the active service IDs (e.g. `"mfrrup"`, `"mfrrdown"`, matching `ServiceId` in site `Portfolios`).
 
 Key fields for HA integration:
-- `Version` – CM10 firmware version (`.83` suffix = device under test)
+- `Version` – CM10 firmware version (`.83` suffix = device under test; e.g. `2.3.106` otherwise)
 - `LastSeenCm10` – last contact from CM10 device
 - `LastSeenInverter` – last data from inverter
 - `FpUpInKw` / `FpDownInKw` – contracted FCR-D power up/down
 - `OperationPreference` – `"co"` = Currently Optimized, `"sc"` = Self Consumption
-- `TestInfo.Latest` – activation test result
+- `TestInfo.Latest` – activation test result (`"Activated"`, `"Deactivated"`, …)
+- `TestInfo.Result` – *2026-10:* now populated for an activated site with three percentages, e.g. `"(100.2 % / 0.3 % / 99.2 %)"` — the same figures as in the logbook's `ACTIVATED` lines
 
 ---
 
@@ -320,6 +326,7 @@ The primary real-time endpoint. Returns current power values in Watts and batter
 
   "BatteryNow": 0.0,
   "BatteryPeak": 10000.0,
+  "BatteryDate": "2026-06-08T14:52:00Z",
   "BatterySoC": 84.0,
   "BatterySoCDate": "2026-06-08T14:52:00Z",
   "BatteryState": 2000,
@@ -343,6 +350,7 @@ The primary real-time endpoint. Returns current power values in Watts and batter
 - `GridNow` is negative when exporting to grid.
 - `BatterySoC` is in percent (0–100).
 - `BatteryState`: `2000` = normal operation (value semantics unclear beyond this).
+- `BatteryDate` (new 2026-10) – time of the `BatteryNow` reading.
 - The `*Ids` arrays reference meter IDs that can be used in `/datagrouping/series`.
 
 ---
@@ -390,7 +398,17 @@ Authorization: Bearer {jwt_token}
 
 Flexible endpoint returning data for multiple data types in a single request.
 
-**`resolution` values:** `Minute` (new 2026-09), `FifteenMinutes`.
+**`resolution` values:**
+
+| Value | Keys in `Data` |
+|---|---|
+| `Minute` (new 2026-09) | one per minute, local time |
+| `FifteenMinutes` | one per 15 minutes, local time |
+| `Day` (new 2026-10) | one per day, local midnight (`2026-10-05T00:00:00`) |
+| `Month` (new 2026-10) | one per month, local (`2026-10-01T00:00:00`) |
+| `Period` (new 2026-10) | **a single total** for the whole `from`–`to` range, keyed by the range start in **UTC** (`2026-10-07T22:00:00Z` for `from=2026-10-08`) |
+
+Days or slots not yet reached are `null`. *2026-10:* the web app now also sends `forceRecalculate=false` on every call; responses look the same without it. It typically requests the same data types twice, once with `FifteenMinutes`/`Day` for the chart and once with `Period` for the headline total.
 
 **Available `dataType` values:**
 
@@ -424,6 +442,19 @@ With `resolution=Minute` these return one instantaneous value per minute (in W, 
 | `BatteryChargeFromGridMonetary` | Monetary value of grid→battery charge |
 | `BatteryDischargeToLoadMonetary` | Monetary value of battery→load |
 | `BatteryDischargeToGridMonetary` | Monetary value of battery→grid |
+
+**Savings data types (new 2026-10** — the dashboard's "Local energy savings" card**):**
+
+| dataType | Description |
+|---|---|
+| `LocalEnergySavingsMonetary` | Net local savings (currency); can be negative |
+| `ValueOfBatteryChargeMonetary` | Value of the energy charged into the battery |
+| `ValueOfBatteryDischargeMonetary` | Value of the energy discharged from the battery |
+| `ValueOfSolarMonetary` | Value of the solar production |
+
+In the observed data `LocalEnergySavingsMonetary` ≈ `ValueOfBatteryDischargeMonetary` − `ValueOfBatteryChargeMonetary` + `ValueOfSolarMonetary` (e.g. 11.05 − 18.24 + 0.05 ≈ −7.19 SEK for a month), so a battery that buys more than it sells back locally shows a negative saving. Requested with `Day`, `Month` and `Period`.
+
+**EV data type (new 2026-10):** `EvChargingPower` (W) is now requested along with the other `Minute` power types; it is `null` for every minute on a site without an EV charger.
 
 **Response 200:**
 ```json
@@ -526,7 +557,7 @@ Authorization: Bearer {jwt_token}
 
 - For `SoC` meters, values are in **Wh** battery capacity (not percent).
 - For energy meters, values are in **Wh**.
-- The `delta` grouping was used for the live "today" view (per-minute resolution); as of 2026-09 the web app uses `/SiteMeasurements/{site_id}/Data` with `resolution=Minute` for that instead. The endpoint itself is still in use (the web app fetches all-time yearly totals with `grouping=3`).
+- The `delta` grouping was used for the live "today" view (per-minute resolution); as of 2026-09 the web app uses `/SiteMeasurements/{site_id}/Data` with `resolution=Minute` for that instead. The endpoint itself is still in use (the web app fetches all-time yearly totals with `grouping=3`, one request per meter; *2026-10:* with `fromdate` set to 100 years back, e.g. `1926`, instead of a fixed year).
 
 ---
 
@@ -535,7 +566,7 @@ Authorization: Bearer {jwt_token}
 ### Get revenue for date range
 
 ```
-GET /revenue/{site_id}?from={YYYY-MM-DD}&to={YYYY-MM-DD}&resolution=day
+GET /revenue/{site_id}?from={YYYY-MM-DD}&to={YYYY-MM-DD}&resolution={day|month}
 Authorization: Bearer {jwt_token}
 ```
 
@@ -556,10 +587,29 @@ Authorization: Bearer {jwt_token}
 }
 ```
 
-- `ServiceName` reflects the actual grid service (e.g. `"mFRR CM"`, `"FCR-D"`) – do not hardcode.
+- `ServiceName` reflects the actual grid service (e.g. `"mFRR CM"`, `"FCR-D"`) – do not hardcode. A day can have **several entries**, one per service.
+- *2026-10:* a new service name **`"mFRR EAM"`** (mFRR energy activation market) appears on days the battery was actually activated for mFRR, next to the `"mFRR CM"` (capacity market) entry. Older settled months use `"mFRR"` without suffix.
 - `Estimate: true` means the value is preliminary / not yet settled.
 - To get current month: `from=YYYY-MM-01&to=YYYY-MM-DD` (last day of month or today+1).
 - Revenue entries only appear for days with data; missing days = no revenue.
+
+**Monthly resolution** (`resolution=month`, observed 2026-10): one entry per service and month, `Date` is the first of the month and the response's `Resolution` is `"Month"`. The dashboard fetches all-time revenue with `from=2023-01-01&to={today}&resolution=month`:
+
+```json
+{
+  "SiteId": 12345,
+  "Currency": "SEK",
+  "Resolution": "Month",
+  "Revenue": [
+    {"ServiceName": "FCR-D", "Date": "2024-03-01", "NetRevenue": 997.52, "Estimate": false},
+    {"ServiceName": "mFRR", "Date": "2026-08-01", "NetRevenue": 561.78, "Estimate": false},
+    {"ServiceName": "mFRR CM", "Date": "2026-10-01", "NetRevenue": 470.50, "Estimate": true},
+    {"ServiceName": "mFRR EAM", "Date": "2026-10-01", "NetRevenue": 23.76, "Estimate": true}
+  ]
+}
+```
+
+Settled months have `Estimate: false`; the current and previous month may still be estimates.
 
 ---
 
@@ -731,9 +781,6 @@ Authorization: Bearer {jwt_token}
     {"DateTime": "2026-06-08T02:00:00Z", "Power": 575.0},
     {"DateTime": "2026-06-08T03:00:00Z", "Power": 376.0}
   ],
-  "SpotPrice": [
-    {"Time": "2026-08-31T12:00:00Z", "Price": 54.18}
-  ],
   "SpotPriceRaw": [
     {"DurationMin": 15, "Time": "2026-08-31T12:00:00Z", "Price": 44.75}
   ],
@@ -746,6 +793,8 @@ Authorization: Bearer {jwt_token}
   "Intraday": [],
   "SystemSetting": {
     "GRID_AREA_CODE_MBA": "SE4",
+    "MULTIPLIER_BATT": "1",
+    "MULTIPLIER_BOUGHT": "1",
     "STREAM_BATT": "energyDischarge",
     "STREAM_BOUGHT": "energyImport",
     "DISCHARGE_MAX": "10000",
@@ -764,6 +813,7 @@ Authorization: Bearer {jwt_token}
     "Manual Power": "10000",
     "Peak Shaving": "0",
     "Frequency Power": "8300",
+    "Sub-tests to run": "mfrr_up_endurance,mfrr_down_endurance",
     "SvKControllerType": "6.0",
     "mFRR Up SOC Limit Lower": "25",
     "mFRR Up SOC Limit Upper": "85",
@@ -776,7 +826,15 @@ Authorization: Bearer {jwt_token}
     "D1H01": "SC",
     "D2H00": "FR_MFRR_UP"
   },
-  "MfrrUpActivation": null,
+  "MfrrUpActivation": [
+    {
+      "Time": "2026-10-07T04:34:00Z",
+      "EndTime": "2026-10-07T05:05:00Z",
+      "Power": 5614.48,
+      "RampUpTime": 600,
+      "RampDownTime": 600
+    }
+  ],
   "MfrrDownActivation": null
 }
 ```
@@ -784,11 +842,18 @@ Authorization: Bearer {jwt_token}
 - `FrequencyPower.Up/Down` – FCR-D power in Watts.
 - `FrequencyPower.MfrrUp/Down` – mFRR power in Watts.
 - `PowerConsumption` – scheduled/forecasted household consumption per hour.
-- `SpotPrice` – hourly spot price in **EUR/MWh**; `SpotPriceRaw` – 15-minute resolution.
+- `SpotPriceRaw` – 15-minute spot price in **EUR/MWh**. *2026-10:* the hourly `SpotPrice` array has been **removed**.
 - `TotalEnergyPrice` – effective buy/sell prices in EUR/MWh per 15-minute interval.
-- `Schedule` – planned EMS activation per hour, keyed `D{day}H{hour}` where D1 = today (see `DateFormat`); values are `AllowedActivationTypes` entries (`SC` = self consumption, `FR_MFRR_UP` = mFRR up reserve, etc.).
-- `UserSetting` – SoC limits, grid limit and other per-site EMS settings (string values).
-- `SystemSetting` – device-level EMS configuration (battery capacity, charge/discharge caps, EMS script).
+- `Schedule` – planned EMS activation per hour, keyed `D{day}H{hour}` where D1 = today (see `DateFormat`); values are `AllowedActivationTypes` entries (`SC` = self consumption, `FR_MFRR_UP` = mFRR up reserve, etc.). *2026-10:* covers 7 days (168 keys).
+- `MfrrUpActivation` / `MfrrDownActivation` – *2026-10:* now populated with the site's **actual mFRR activations** (null or absent when there are none):
+  - `Time` / `EndTime` – start and end of the activation (UTC)
+  - `Power` – activated power in W (≈ 5.6 kW for an `MfrrUp` bid of 6 kW)
+  - `RampUpTime` / `RampDownTime` – ramp durations in seconds
+  
+  A response at 13:54 UTC listed activations from 04:34 UTC the previous day, so the list covers at least the past day. These activations are what the `"mFRR EAM"` revenue pays for. How soon after its start an activation is listed is not known.
+- `UserSetting` – SoC limits, grid limit and other per-site EMS settings (string values). *2026-10:* new `"Sub-tests to run"` (comma-separated, e.g. `mfrr_up_endurance,mfrr_down_endurance`).
+- `SystemSetting` – device-level EMS configuration (battery capacity, charge/discharge caps, EMS script). *2026-10:* new `MULTIPLIER_BATT` and `MULTIPLIER_BOUGHT`.
+- `FrequencyPower.MfrrUp` and `MfrrDown` can differ (e.g. 6000 and 9000 W).
 - `Updated` – when the schedule was last regenerated.
 
 ---
@@ -867,9 +932,14 @@ app queries a 5-minute window ending now (ISO 8601 UTC with milliseconds, e.g.
           "fw_ver": "master:13-slave:13 /arm:33",
           "temp_h": 36.4,
           "temp_l": 20.8,
+          "grid": 186.0,
           "pv_power": 0.0,
+          "ev_power": null,
           "battery_power": -12.0,
-          "set_point": 0.0
+          "battery_capacity": null,
+          "set_point": 0.0,
+          "master_inverter_stat": null,
+          "slave_inverter_stats": null
         }
       ]
     },
@@ -877,6 +947,7 @@ app queries a 5-minute window ending now (ISO 8601 UTC with milliseconds, e.g.
     "ems/datastream_energyImport": 186.0,
     "ems/datastream_energyDischarge": -12.0
   },
+  "freq_hz": null,
   "screens": ["15814.sender", "15811.goodwe", "..."],
   "arp_eth1": [{"ip": "192.168.5.128", "mac": "...", "state": ["REACHABLE"]}],
   "uptime_s": 1114187,
@@ -893,6 +964,9 @@ Key fields:
 - `default_route` – active route interfaces (`eth0` = LAN1, `ppp0` = 4G modem)
 - `uptime_s` – CM10 uptime in seconds
 - `eth1` / `arp_eth1` – the inverter-facing LAN port
+- `modem_stat.status` – `"modem"` or, *2026-10*, `"lan"` (seen on a site connected via LAN1)
+
+New fields 2026-10: per inverter `grid` (W, grid power as the inverter sees it), `ev_power`, `battery_capacity`, `master_inverter_stat` and `slave_inverter_stats` (null on a single inverter); top-level `freq_hz` (null); per interface error counters in `eth` (`rx_errors`, `tx_errors`, `rx_dropped`, `tx_dropped`, `rx_crc_errors`, `tx_packets`); `flags` on `linux_ips` entries.
 
 The "Available power" panel (Can charge / Can discharge) comes from
 `RelatedMeters[].PeakAcKw` in `/site/Statuses`, not from this endpoint.
@@ -924,6 +998,8 @@ No auth required. Returns all energy retailers across SE/NO/DK/FI with Id and Di
 | Spot price | 60 min (or at :00 when tomorrow's prices arrive ~13:00) | `/ems/spotprice` |
 | Site status / CM10 seen | 5 min | `/site/Statuses` |
 | Diagnostics (battery temp, connectivity) | 5 min | `/diag/{siteId}/connectionStatus` |
+| mFRR activations | 5 min | `/ems/ActivationSchedule` (~40 kB) |
+| All-time revenue | 15 min | `/revenue/{siteId}?resolution=month` |
 | Site details / tariff | On setup + daily | `/site/{siteId}`, `/Tariff/{id}` |
 
 ### Token lifecycle

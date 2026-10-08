@@ -31,7 +31,8 @@ Alla sensorer hamnar under en enhet namngiven efter din anläggning. Namnen neda
 |---|---|---|
 | Dagens intäkt | SEK | 15 min |
 | Månadsintäkt | SEK | 15 min |
-| Aktiv nättjänst *(mFRR CM, FCR-D, …)* | – | 15 min |
+| Total intäkt *(sedan start; summa per tjänst som attribut)* | SEK | 15 min |
+| Aktiv nättjänst *(mFRR CM, FCR-D, …; dagar med mFRR-aktivering även mFRR EAM)* | – | 15 min |
 | Spotpris *(exkl. moms)* | SEK/kWh | varje kvart *(priserna hämtas varje timme)* |
 | Spotpris inkl. moms | SEK/kWh | varje kvart *(priserna hämtas varje timme)* |
 | Priszon | – | 60 s |
@@ -61,6 +62,23 @@ Energisensorerna har `state_class: total_increasing` och fungerar direkt med **H
 | Loggbok *(senaste händelsen; de fem senaste som attribut)* | – | 30 min |
 | Senaste API-hämtning *(diagnostik, se [Felsökning](#sensorer-visar-otillgänglig))* | tidsstämpel | 60 s |
 
+**mFRR-aktivering**
+
+| Binär sensor | Uppdateras |
+|---|---|
+| mFRR-aktivering pågår | 60 s *(aktiveringarna hämtas var 5:e minut)* |
+
+Sensorn är på medan batteriet är aktiverat för mFRR, alltså när CheckWatt faktiskt använder det för upp- eller nedreglering och inte bara har det i beredskap. Attributen beskriver den pågående aktiveringen, eller den senaste när ingen pågår:
+
+| Attribut | Innehåll |
+|---|---|
+| `direction` | `up` (uppreglering) eller `down` (nedreglering) |
+| `start`, `end` | när aktiveringen började och slutade |
+| `power_w` | aktiverad effekt i W |
+| `ramp_up_s`, `ramp_down_s` | upp- och nedrampningstid i sekunder |
+
+Aktiveringarna hämtas från samma schema som EnergyInBalance visar. Det är inte känt hur snart efter starten en aktivering syns där, så sensorn kan slå på en stund efter att aktiveringen börjat.
+
 ### Händelser
 
 Händelseentiteter som kan användas som utlösare i automationer:
@@ -69,7 +87,26 @@ Händelseentiteter som kan användas som utlösare i automationer:
 |---|---|---|
 | CM10 Teststatus | CM10:ns teststatus ändras | 60 s |
 | Logbokshändelse | en ny rad dyker upp i anläggningens loggbok | 30 min |
+| mFRR-aktivering | en ny mFRR-aktivering dyker upp; händelsetypen är `up` eller `down` och attributen är desamma som för sensorn ovan | 5 min |
 | Nyhet | EnergyInBalance publicerar en ny nyhet | 4 h |
+
+Händelser utlöses bara för det som tillkommer efter att HA startat, inte för sådant som redan fanns vid start. En händelseentitet visar därför **Okänt** tills något har hänt första gången. Det är Home Assistants normala läge för händelser och betyder inte att entiteten är trasig. Därefter visar den tiden för den senaste händelsen, även efter omstart. Det aktuella läget finns i sensorerna CM10 Status och Loggbok och i den binära sensorn för mFRR-aktivering.
+
+Exempel – notis vid varje mFRR-aktivering:
+
+```yaml
+automation:
+  - alias: "Notis vid mFRR-aktivering"
+    triggers:
+      - trigger: state
+        entity_id: event.min_anlaggning_mfrr_activation  # anläggningens namn + mfrr_activation; kontrollera under din CheckWatt-enhet
+    actions:
+      - action: notify.notify
+        data:
+          message: >
+            mFRR {{ trigger.to_state.attributes.event_type }}:
+            {{ trigger.to_state.attributes.power_w }} W från
+            {{ as_local(as_datetime(trigger.to_state.attributes.start)).strftime('%H:%M') }}
 
 ### Autentisering
 
@@ -156,7 +193,7 @@ Verifiera att du kan logga in på [energyinbalance.se](https://energyinbalance.s
 
 ### Sensorer visar "Otillgänglig"
 
-Öppna diagnostiksensorn **Senaste API-hämtning** på CheckWatt-enheten. Dess värde är när API:et senast hämtades utan fel. Attributen visar senaste felet och, för varje långsam hämtning (`revenue`, `price`, `energy`, `logbook`, `diagnostics`, `news`), när den senast lyckades, vad som gick fel (till exempel `HTTP 404`) och när nästa försök görs.
+Öppna diagnostiksensorn **Senaste API-hämtning** på CheckWatt-enheten. Dess värde är när API:et senast hämtades utan fel. Attributen visar senaste felet och, för varje långsam hämtning (`revenue`, `price`, `energy`, `logbook`, `diagnostics`, `activations`, `news`), när den senast lyckades, vad som gick fel (till exempel `HTTP 404`) och när nästa försök görs.
 
 Misslyckade hämtningar loggas också som varningar under **Inställningar → System → Loggar**. Debug-loggning visar dessutom bland annat anläggningens serienummer och site-id vid start samt energivärden som ignoreras. Slå på den under **Inställningar → Enheter och tjänster → CheckWatt → ⋮ → Aktivera felsökningsloggning**, eller i `configuration.yaml`:
 
@@ -178,3 +215,17 @@ Integrationen ignorerar tomma svar, och minskningar jämfört med föregående v
 Pull requests och issues välkomnas på [GitHub](https://github.com/andreasthell/ha-cw/issues).
 
 API-dokumentation finns i [`docs/api.md`](docs/api.md).
+
+### Tester
+
+Det finns två testsviter, och CI kör båda:
+
+- `tests/` är snabba enhetstester mot förenklade HA-stubbar: `pip install pytest && pytest`
+- `tests_ha/` kör integrationen i en riktig Home Assistant (versionen står i [`requirements_test_ha.txt`](requirements_test_ha.txt), just nu 2026.10.0, och kräver Python 3.14):
+
+  ```
+  pip install -r requirements_test_ha.txt
+  pytest tests_ha -o asyncio_mode=auto
+  ```
+
+Sviterna kan inte köras i samma pytest-körning, eftersom stubbarna i `tests/` ersätter `homeassistant`.

@@ -31,7 +31,8 @@ Alla sensorer hamnar under en enhet namngiven efter din anläggning. Namnen neda
 |---|---|---|
 | Dagens intäkt | SEK | 15 min |
 | Månadsintäkt | SEK | 15 min |
-| Aktiv nättjänst *(mFRR CM, FCR-D, …)* | – | 15 min |
+| Total intäkt *(sedan start; summa per tjänst som attribut)* | SEK | 15 min |
+| Aktiv nättjänst *(mFRR CM, FCR-D, …; dagar med mFRR-aktivering även mFRR EAM)* | – | 15 min |
 | Spotpris *(exkl. moms)* | SEK/kWh | varje kvart *(priserna hämtas varje timme)* |
 | Spotpris inkl. moms | SEK/kWh | varje kvart *(priserna hämtas varje timme)* |
 | Priszon | – | 60 s |
@@ -61,6 +62,23 @@ Energisensorerna har `state_class: total_increasing` och fungerar direkt med **H
 | Loggbok *(senaste händelsen; de fem senaste som attribut)* | – | 30 min |
 | Senaste API-hämtning *(diagnostik, se [Felsökning](#sensorer-visar-otillgänglig))* | tidsstämpel | 60 s |
 
+**mFRR-aktivering**
+
+| Binär sensor | Uppdateras |
+|---|---|
+| mFRR-aktivering pågår | 60 s *(aktiveringarna hämtas var 5:e minut)* |
+
+Sensorn är på medan batteriet är aktiverat för mFRR, alltså när CheckWatt faktiskt använder det för upp- eller nedreglering och inte bara har det i beredskap. Attributen beskriver den pågående aktiveringen, eller den senaste när ingen pågår:
+
+| Attribut | Innehåll |
+|---|---|
+| `direction` | `up` (uppreglering) eller `down` (nedreglering) |
+| `start`, `end` | när aktiveringen började och slutade |
+| `power_w` | aktiverad effekt i W |
+| `ramp_up_s`, `ramp_down_s` | upp- och nedrampningstid i sekunder |
+
+Aktiveringarna hämtas från samma schema som EnergyInBalance visar. Det är inte känt hur snart efter starten en aktivering syns där, så sensorn kan slå på en stund efter att aktiveringen börjat.
+
 ### Händelser
 
 Händelseentiteter som kan användas som utlösare i automationer:
@@ -69,7 +87,26 @@ Händelseentiteter som kan användas som utlösare i automationer:
 |---|---|---|
 | CM10 Teststatus | CM10:ns teststatus ändras | 60 s |
 | Logbokshändelse | en ny rad dyker upp i anläggningens loggbok | 30 min |
+| mFRR-aktivering | en ny mFRR-aktivering dyker upp; händelsetypen är `up` eller `down` och attributen är desamma som för sensorn ovan | 5 min |
 | Nyhet | EnergyInBalance publicerar en ny nyhet | 4 h |
+
+Händelser utlöses bara för det som tillkommer efter att HA startat, inte för sådant som redan fanns vid start.
+
+Exempel – notis vid varje mFRR-aktivering:
+
+```yaml
+automation:
+  - alias: "Notis vid mFRR-aktivering"
+    triggers:
+      - trigger: state
+        entity_id: event.din_anlaggning_mfrr_aktivering  # se entitets-id under din CheckWatt-enhet
+    actions:
+      - action: notify.notify
+        data:
+          message: >
+            mFRR {{ trigger.to_state.attributes.event_type }}:
+            {{ trigger.to_state.attributes.power_w }} W från
+            {{ as_local(as_datetime(trigger.to_state.attributes.start)).strftime('%H:%M') }}
 
 ### Autentisering
 
@@ -156,7 +193,7 @@ Verifiera att du kan logga in på [energyinbalance.se](https://energyinbalance.s
 
 ### Sensorer visar "Otillgänglig"
 
-Öppna diagnostiksensorn **Senaste API-hämtning** på CheckWatt-enheten. Dess värde är när API:et senast hämtades utan fel. Attributen visar senaste felet och, för varje långsam hämtning (`revenue`, `price`, `energy`, `logbook`, `diagnostics`, `news`), när den senast lyckades, vad som gick fel (till exempel `HTTP 404`) och när nästa försök görs.
+Öppna diagnostiksensorn **Senaste API-hämtning** på CheckWatt-enheten. Dess värde är när API:et senast hämtades utan fel. Attributen visar senaste felet och, för varje långsam hämtning (`revenue`, `price`, `energy`, `logbook`, `diagnostics`, `activations`, `news`), när den senast lyckades, vad som gick fel (till exempel `HTTP 404`) och när nästa försök görs.
 
 Misslyckade hämtningar loggas också som varningar under **Inställningar → System → Loggar**. Debug-loggning visar dessutom bland annat anläggningens serienummer och site-id vid start samt energivärden som ignoreras. Slå på den under **Inställningar → Enheter och tjänster → CheckWatt → ⋮ → Aktivera felsökningsloggning**, eller i `configuration.yaml`:
 

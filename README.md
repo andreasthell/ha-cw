@@ -90,7 +90,7 @@ Händelseentiteter som kan användas som utlösare i automationer:
 | mFRR-aktivering | en ny mFRR-aktivering dyker upp; händelsetypen är `up` eller `down` och attributen är desamma som för sensorn ovan | 5 min |
 | Nyhet | EnergyInBalance publicerar en ny nyhet | 4 h |
 
-Händelser utlöses bara för det som tillkommer efter att HA startat, inte för sådant som redan fanns vid start.
+Händelser utlöses bara för det som tillkommer efter att HA startat, inte för sådant som redan fanns vid start. En händelseentitet visar därför **Okänt** tills något har hänt första gången. Det är Home Assistants normala läge för händelser och betyder inte att entiteten är trasig. Därefter visar den tiden för den senaste händelsen, även efter omstart. Det aktuella läget finns i sensorerna CM10 Status och Loggbok och i den binära sensorn för mFRR-aktivering.
 
 Exempel – notis vid varje mFRR-aktivering:
 
@@ -99,7 +99,7 @@ automation:
   - alias: "Notis vid mFRR-aktivering"
     triggers:
       - trigger: state
-        entity_id: event.din_anlaggning_mfrr_aktivering  # se entitets-id under din CheckWatt-enhet
+        entity_id: event.mfrr_activation  # kontrollera entitets-id under din CheckWatt-enhet
     actions:
       - action: notify.notify
         data:

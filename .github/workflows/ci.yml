@@ -10,11 +10,11 @@ jobs:
     name: Lint (ruff)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
+      - uses: actions/checkout@v7
+      - uses: astral-sh/ruff-action@v4.1.0
         with:
           args: check
-      - uses: astral-sh/ruff-action@v3
+      - uses: astral-sh/ruff-action@v4.1.0
         with:
           args: format --check
 
@@ -22,8 +22,8 @@ jobs:
     name: Tests (pytest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install pytest
@@ -37,7 +37,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Read version from manifest
         id: version
@@ -56,7 +56,7 @@ jobs:
 
       - name: Create tag and release
         if: steps.tag_check.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.version }}
           generate_release_notes: true

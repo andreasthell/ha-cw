@@ -99,7 +99,7 @@ automation:
   - alias: "Notis vid mFRR-aktivering"
     triggers:
       - trigger: state
-        entity_id: event.mfrr_activation  # kontrollera entitets-id under din CheckWatt-enhet
+        entity_id: event.min_anlaggning_mfrr_activation  # anläggningens namn + mfrr_activation; kontrollera under din CheckWatt-enhet
     actions:
       - action: notify.notify
         data:

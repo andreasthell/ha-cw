@@ -100,6 +100,10 @@ automation:
     triggers:
       - trigger: state
         entity_id: event.min_anlaggning_mfrr_activation  # anläggningens namn + mfrr_activation; kontrollera under din CheckWatt-enhet
+        # Utan dessa utlöses automationen även när HA startar om eller
+        # integrationen laddas om, och när entiteten blir otillgänglig.
+        not_from: unavailable
+        not_to: unavailable
     actions:
       - action: notify.notify
         data:
@@ -107,6 +111,7 @@ automation:
             mFRR {{ trigger.to_state.attributes.event_type }}:
             {{ trigger.to_state.attributes.power_w }} W från
             {{ as_local(as_datetime(trigger.to_state.attributes.start)).strftime('%H:%M') }}
+```
 
 ### Autentisering
 

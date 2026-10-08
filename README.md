@@ -215,3 +215,17 @@ Integrationen ignorerar tomma svar, och minskningar jämfört med föregående v
 Pull requests och issues välkomnas på [GitHub](https://github.com/andreasthell/ha-cw/issues).
 
 API-dokumentation finns i [`docs/api.md`](docs/api.md).
+
+### Tester
+
+Det finns två testsviter, och CI kör båda:
+
+- `tests/` är snabba enhetstester mot förenklade HA-stubbar: `pip install pytest && pytest`
+- `tests_ha/` kör integrationen i en riktig Home Assistant (versionen står i [`requirements_test_ha.txt`](requirements_test_ha.txt), just nu 2026.10.0, och kräver Python 3.14):
+
+  ```
+  pip install -r requirements_test_ha.txt
+  pytest tests_ha -o asyncio_mode=auto
+  ```
+
+Sviterna kan inte köras i samma pytest-körning, eftersom stubbarna i `tests/` ersätter `homeassistant`.

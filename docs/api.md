@@ -351,6 +351,7 @@ The primary real-time endpoint. Returns current power values in Watts and batter
 - `BatterySoC` is in percent (0–100).
 - `BatteryState`: `2000` = normal operation (value semantics unclear beyond this).
 - `BatteryDate` (new 2026-10) – time of the `BatteryNow` reading.
+- *Inverter outage (2026-10-23):* when the inverter stops reporting, the values do **not** go `null` — `BatterySoC` and `BatteryNow` read `0.0` (the CM10 diagnostics blob still showed `soc: 86.0` a few minutes earlier) and `BatteryState` stays `2000`. `BatteryDate`, `BatterySoCDate` and `GridDate` freeze at the last reading, so staleness is only visible from those timestamps (or `LastSeenInverter` in `/site/Statuses`). See [Inverter outage](#inverter-outage-observed-2026-10-23).
 - The `*Ids` arrays reference meter IDs that can be used in `/datagrouping/series`.
 
 ---
@@ -406,7 +407,9 @@ Flexible endpoint returning data for multiple data types in a single request.
 | `FifteenMinutes` | one per 15 minutes, local time |
 | `Day` (new 2026-10) | one per day, local midnight (`2026-10-05T00:00:00`) |
 | `Month` (new 2026-10) | one per month, local (`2026-10-01T00:00:00`) |
-| `Period` (new 2026-10) | **a single total** for the whole `from`–`to` range, keyed by the range start in **UTC** (`2026-10-07T22:00:00Z` for `from=2026-10-08`) |
+| `Period` (new 2026-10) | **a single total** for the whole `from`–`to` range, keyed by the range start — in **UTC** (`2026-10-07T22:00:00Z` for `from=2026-10-08`) when first seen, *since 2026-10-23* with the local offset (`2026-10-23T00:00:00+02:00`) |
+
+*2026-10-23:* `Day` and `Period` keys now carry the local UTC offset (`2026-10-23T00:00:00+02:00`) — `Period` is no longer keyed in UTC. Parse keys as ISO 8601 with an optional offset rather than matching a fixed format.
 
 Days or slots not yet reached are `null`. *2026-10:* the web app now also sends `forceRecalculate=false` on every call; responses look the same without it. It typically requests the same data types twice, once with `FifteenMinutes`/`Day` for the chart and once with `Period` for the headline total.
 
@@ -970,6 +973,33 @@ New fields 2026-10: per inverter `grid` (W, grid power as the inverter sees it),
 
 The "Available power" panel (Can charge / Can discharge) comes from
 `RelatedMeters[].PeakAcKw` in `/site/Statuses`, not from this endpoint.
+
+---
+
+## Inverter outage (observed 2026-10-23)
+
+A capture of the web app while the inverter was down (about 7 minutes after it
+stopped reporting) shows what an outage looks like from the API. CheckWatt had
+not reacted yet: no logbook entry, and `TestInfo.Latest` was still
+`"Activated"`. Earlier outages that CheckWatt *did* act on show up in the
+logbook as `[ mfrrup DEACTIVATE ]  [ mfrrup OFFLINE ] …`.
+
+| Endpoint | What it returned |
+|---|---|
+| `/ems/energyflow` | `BatterySoC: 0.0`, `BatteryNow: 0.0` (fake zeros, not `null`), `BatteryState: 2000`; `BatteryDate`/`BatterySoCDate`/`GridDate` frozen at the last reading; `GridNow` still the last value |
+| `/user/FacilitiesV2` | SoC facility `Value: 0.0`, `Date` frozen at the last reading |
+| `/site/Statuses` | `LastSeenInverter` frozen at the last reading; `TestInfo` unchanged |
+| `/SiteMeasurements/{id}/Data?resolution=Minute` | every data type `null` for the minutes since the outage |
+| `/SiteMeasurements/{id}/Data?resolution=FifteenMinutes` | slots after the outage `null`, as for future slots |
+| `/diag/{id}/connectionStatus` | `Current` still the last blob before the outage (inverter `REACHABLE`, real `soc`), `History: []` |
+
+`LastSeenCm10` was about 3.5 hours old at the time, but it lags by tens of
+minutes in normal operation too, so it is not a reliable outage signal on its
+own.
+
+**For consumers:** a `BatterySoC` of `0.0` is not trustworthy on its own —
+check `BatterySoCDate` (or `LastSeenInverter`) for staleness before using it,
+and treat a stale reading as unknown rather than as an empty battery.
 
 ---
 
